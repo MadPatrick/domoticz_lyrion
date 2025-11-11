@@ -1,12 +1,12 @@
 """
-<plugin key="LogitechMediaServer" name="Logitech Media Server (extended)" author="You" version="1.3.1" wikilink="https://github.com/Logitech/slimserver" externallink="https://mysqueezebox.com">
+<plugin key="LogitechMediaServer" name="Logitech Media Server (extended)" author="MadPatrick" version="1.4.4" wikilink="https://github.com/Logitech/slimserver" externallink="https://mysqueezebox.com">
     <description>
         <h2>Logitech Media Server Plugin - Extended</h2>
         Detecteert spelers, maakt devices aan en biedt:
         - Power / Play / Pause / Stop
         - Volume (Dimmer)
         - Track info (Text)
-        - Playlists (Selector)
+        - Playlists (Selector per speler)
         - Sync / Unsync
         - Display text (via Actions device)
     </description>
@@ -25,8 +25,6 @@ import Domoticz
 import requests
 import time
 
-PLAYLISTS_DEVICE_UNIT = 250
-
 
 class LMSPlugin:
     def __init__(self):
@@ -37,6 +35,7 @@ class LMSPlugin:
         self.players = []
         self.playlists = []
         self.max_playlists = 50
+        self.created_players = set()  # <-- nieuw: onthoud welke spelers devices hebben
 
     def onStart(self):
         Domoticz.Log("LMS Plugin started.")
@@ -58,16 +57,13 @@ class LMSPlugin:
             self.nextPoll = time.time() + self.pollInterval
             self.updateEverything()
 
-    # -------------------------
-    # LMS JSON-RPC helpers
-    # -------------------------
+    # ---- JSON helpers ----
     def lms_query_raw(self, player, cmd_array):
         data = {"id": 1, "method": "slim.request", "params": [player, cmd_array]}
         try:
             r = requests.post(self.url, json=data, auth=self.auth, timeout=6)
             r.raise_for_status()
-            j = r.json()
-            return j.get("result", j)
+            return r.json().get("result", {})
         except Exception as e:
             Domoticz.Error(f"LMS query error: {e}")
             return None
@@ -87,200 +83,128 @@ class LMSPlugin:
     def send_button(self, playerid, button):
         return self.send_playercmd(playerid, ["button", button])
 
-    def send_display_text(self, playerid, subject, text, duration=5):
-        if not playerid or not text:
-            return
-        s1 = str(subject)[:64].replace('"', "'")
-        s2 = str(text)[:128].replace('"', "'")
-        cmd = ["show", f"line1:{s1}", f"line2:{s2}", f"duration:{duration}", "brightness:4", "font:huge"]
-        self.send_playercmd(playerid, cmd)
-        Domoticz.Log(f"Display text sent to {playerid}: {s1} / {s2}")
+    # ---- Devices ----
+    def devices_exist(self, name):
+        """Controleer of er al devices bestaan voor deze speler"""
+        for d in Devices.values():
+            if d.Name.startswith(name):
+                return True
+        return False
 
-    # -------------------------
-    # Device helpers
-    # -------------------------
-    def friendly_dev_name(self, name, mac):
-        return f"{name} [{mac}]"
-
-    def find_player_devices(self, mac):
-        for u, dev in Devices.items():
-            if dev.Name.endswith(f"[{mac}]"):
-                baseprefix = dev.Name[:-(len(mac) + 3)]
-                main = vol = text = actions = None
-                for uid, d in Devices.items():
-                    if d.Name.startswith(baseprefix) and d.Name.endswith(f"[{mac}]"):
-                        if "Volume" in d.Name:
-                            vol = uid
-                        elif "Track" in d.Name:
-                            text = uid
-                        elif "Actions" in d.Name:
-                            actions = uid
-                        else:
-                            main = uid
-                return (main, vol, text, actions)
-        return None
-
-    def create_player_devices(self, name, mac):
-        friendly = self.friendly_dev_name(name, mac)
-        unit = 1
-        while unit in Devices:
-            unit += 10
-        opts_main = {"LevelNames": "Off|Pause|Play|Stop", "LevelActions": "||||", "SelectorStyle": "0"}
-        Domoticz.Device(Name=friendly, Unit=unit, TypeName="Selector Switch", Switchtype=18, Options=opts_main).Create()
-        Domoticz.Device(Name=f"{name} Volume [{mac}]", Unit=unit + 1, TypeName="Dimmer").Create()
-        Domoticz.Device(Name=f"{name} Track [{mac}]", Unit=unit + 2, TypeName="Text").Create()
-        opts_act = {"LevelNames": "None|SendText|Sync to this|Unsync", "LevelActions": "||", "SelectorStyle": "0"}
-        Domoticz.Device(Name=f"{name} Actions [{mac}]", Unit=unit + 3, TypeName="Selector Switch", Switchtype=18, Options=opts_act).Create()
+    def create_player_devices(self, name):
+        """Maak speler-devices alleen als ze nog niet bestaan"""
+        if self.devices_exist(name) or name in self.created_players:
+            return  # <-- voorkom herhaald aanmaken
+        base = 1
+        while base in Devices:
+            base += 10
+        Domoticz.Device(Name=name, Unit=base, TypeName="Selector Switch",
+                        Switchtype=18, Options={"LevelNames": "Off|Pause|Play|Stop", "SelectorStyle": "0"}).Create()
+        Domoticz.Device(Name=f"{name} Volume", Unit=base + 1, TypeName="Dimmer").Create()
+        Domoticz.Device(Name=f"{name} Track", Unit=base + 2, TypeName="Text").Create()
+        Domoticz.Device(Name=f"{name} Actions", Unit=base + 3, TypeName="Selector Switch",
+                        Switchtype=18, Options={"LevelNames": "None|SendText|Sync to this|Unsync", "SelectorStyle": "0"}).Create()
+        Domoticz.Device(Name=f"{name} Playlists", Unit=base + 4, TypeName="Selector Switch",
+                        Switchtype=18, Options={"LevelNames": "Loading...", "SelectorStyle": "0"}).Create()
+        self.created_players.add(name)
         Domoticz.Log(f"Created devices for {name}")
-        return (unit, unit + 1, unit + 2, unit + 3)
 
-    # -------------------------
-    # Updating players & playlists
-    # -------------------------
     def reload_playlists(self):
         root = self.get_playlists()
         if not root:
             self.playlists = []
             return
         pl = root.get("playlists_loop", [])
-        self.playlists = [{"id": p.get("id"), "playlist": p.get("playlist", ""), "refid": int(p.get("id", 0)) % 256} for p in pl[:self.max_playlists]]
+        self.playlists = [{"id": p.get("id"), "playlist": p.get("playlist", "")} for p in pl[:self.max_playlists]]
 
-        if PLAYLISTS_DEVICE_UNIT not in Devices:
-            levelnames = "|".join([p["playlist"] for p in self.playlists]) if self.playlists else "No playlists"
-            opts = {"LevelNames": levelnames, "LevelActions": "||", "SelectorStyle": "0"}
-            Domoticz.Device(Name="LMS Playlists", Unit=PLAYLISTS_DEVICE_UNIT, TypeName="Selector Switch", Switchtype=18, Options=opts).Create()
-            Domoticz.Log(f"Created Playlists device unit {PLAYLISTS_DEVICE_UNIT}")
-
+    # ---- Update loop ----
     def updateEverything(self):
         server = self.get_serverstatus()
         if not server:
-            Domoticz.Error(f"No response from LMS server at {self.url}")
+            Domoticz.Error("No response from LMS server.")
             return
 
         self.players = server.get("players_loop", [])
-        for p in self.players:
-            name, mac = p.get("name", "Unknown"), p.get("playerid", "")
-            if not mac:
-                continue
-            if not self.find_player_devices(mac):
-                self.create_player_devices(name, mac)
-
         self.reload_playlists()
 
         for p in self.players:
             name, mac = p.get("name", "Unknown"), p.get("playerid", "")
-            if not mac:
+            if not mac or not name:
                 continue
-            devices = self.find_player_devices(mac)
-            if not devices:
-                continue
-            main, vol, text, actions = devices
+            self.create_player_devices(name)
+
+            # Zoek bestaande devices
+            devs = {d.Name: d for d in Devices.values() if d.Name.startswith(name)}
             st = self.get_status(mac) or {}
             power = int(st.get("power", 0))
             mode = st.get("mode", "stop")
-            mixer_vol = int(st.get("mixer volume", 0))
-            sel_level = {"pause": 10, "play": 20, "stop": 30}.get(mode, 0)
+            vol = int(st.get("mixer volume", 0))
+            sel = {"pause": 10, "play": 20, "stop": 30}.get(mode, 0)
             if power == 0:
-                sel_level = 0
+                sel = 0
 
-            if main in Devices:
-                nval = 1 if power == 1 else 0
-                sval = str(sel_level)
-                if Devices[main].nValue != nval or Devices[main].sValue != sval:
-                    Devices[main].Update(nValue=nval, sValue=sval)
-
-            if vol in Devices:
-                onoff = 1 if power == 1 else 0
-                sval = str(mixer_vol if power == 1 else 0)
-                if Devices[vol].nValue != onoff or Devices[vol].sValue != sval:
-                    Devices[vol].Update(nValue=onoff, sValue=sval)
-
-            # --- Track info / Now Playing display ---
-            if text in Devices:
-                title = st.get("title") or st.get("current_title") or "(onbekend nummer)"
-                artist = st.get("artist") or ""
-                album = st.get("album") or ""
-
-                # radio metadata fallback
-                for key in ("remote_meta", "remoteMeta"):
-                    if key in st:
-                        meta = st[key]
-                        title = meta.get("title", title)
-                        artist = meta.get("artist", artist)
-                        album = meta.get("album", album)
-
-                # stationnaam verwijderen
-                if "current_title" in st:
-                    station = st["current_title"]
-                    if title.startswith(station):
-                        title = title[len(station):].strip(" -")
-                    title = title.replace("??", "").strip()
-
-                # fallback splitsing
-                if not artist and "-" in title:
-                    parts = title.split("-", 1)
-                    if len(parts) == 2:
-                        artist, title = parts[0].strip(), parts[1].strip()
-
-                if not title and "remote_title" in st:
-                    title = st["remote_title"]
-                if not title and "url" in st:
-                    title = st["url"].split("/")[-1]
-
-                if power == 0:
-                    label = "Uit"
-                elif mode == "play":
+            # Update devices
+            for d in devs.values():
+                if "Volume" in d.Name:
+                    d.Update(nValue=1 if power else 0, sValue=str(vol))
+                elif "Track" in d.Name:
+                    title = st.get("title") or st.get("current_title") or "(onbekend nummer)"
+                    artist = st.get("artist") or ""
+                    album = st.get("album") or ""
+                    for key in ("remote_meta", "remoteMeta"):
+                        if key in st:
+                            meta = st[key]
+                            title = meta.get("title", title)
+                            artist = meta.get("artist", artist)
+                            album = meta.get("album", album)
                     label = f"{title}"
                     if artist:
                         label += f" - {artist}"
                     if album:
                         label += f" ({album})"
-                elif mode == "pause":
-                    label = f"{title}"
-                else:
-                    label = "Gestopt"
+                    label = label.replace("??", "").strip()
+                    if d.sValue != label:
+                        d.Update(nValue=0, sValue=label)
+                        Domoticz.Log(f"Logitech Media Server: ({name}) Playing - '{artist} - {title}'")
+                elif "Playlists" in d.Name:
+                    levelnames = "|".join([p["playlist"] for p in self.playlists]) if self.playlists else "No playlists"
+                    opts = {"LevelNames": levelnames, "SelectorStyle": "0"}
+                    d.Options = opts
+                    d.Update(nValue=0, sValue="0")
+                elif "Actions" not in d.Name:
+                    d.Update(nValue=power, sValue=str(sel))
 
-                label = label[:255]
-                if Devices[text].sValue != label:
-                    Devices[text].Update(nValue=0, sValue=label)
-                    artist_part = f"{artist} - " if artist else ""
-                    title_part = title or "(onbekend nummer)"
-                    Domoticz.Log(f"Logitech Media Server: ({name}) Playing - '{artist_part}{title_part}'")
-
-    # -------------------------
-    # Handling commands
-    # -------------------------
+    # ---- Commands ----
     def onCommand(self, Unit, Command, Level, Hue):
         Domoticz.Log(f"onCommand Unit={Unit} Command={Command} Level={Level}")
-        if Unit == PLAYLISTS_DEVICE_UNIT and Command == "Set Level" and self.playlists:
-            idx = int(Level) - 1
-            if 0 <= idx < len(self.playlists):
-                target_mac = self.players[0].get("playerid") if self.players else None
-                if target_mac:
-                    pl = self.playlists[idx]
-                    self.send_playercmd(target_mac, ["playlist", "play", pl["playlist"]])
-                    self.nextPoll = time.time() + 1
+        devname = Devices[Unit].Name
+        name = devname.split(" Volume")[0].split(" Track")[0].split(" Actions")[0].split(" Playlists")[0]
+        player = next((p for p in self.players if p.get("name") == name), None)
+        if not player:
             return
+        mac = player.get("playerid")
 
-        if Unit in Devices:
-            devname = Devices[Unit].Name
-            mac = devname.split("[")[-1].strip("]") if "[" in devname else None
-            if not mac:
-                return
-            if Command in ["On", "Off"]:
-                desired = "1" if Command == "On" else "0"
-                self.send_playercmd(mac, ["power", desired])
-                Devices[Unit].Update(nValue=1 if Command == "On" else 0, sValue="20" if Command == "On" else "0")
-                return
-            if Command == "Set Level" and "Volume" not in devname:
+        if "Volume" not in devname and "Playlist" not in devname and "Action" not in devname:
+            if Command == "On":
+                self.send_playercmd(mac, ["power", "1"])
+            elif Command == "Off":
+                self.send_playercmd(mac, ["power", "0"])
+            elif Command == "Set Level":
                 btn = {10: "pause.single", 20: "play.single", 30: "stop"}.get(Level, "stop")
                 self.send_button(mac, btn)
-                Devices[Unit].Update(nValue=1, sValue=str(Level))
-                return
-            if "Volume" in devname and Command == "Set Level":
-                self.send_playercmd(mac, ["mixer", "volume", str(Level)])
-                Devices[Unit].Update(nValue=1, sValue=str(Level))
-                return
+            return
+
+        if "Volume" in devname and Command == "Set Level":
+            self.send_playercmd(mac, ["mixer", "volume", str(Level)])
+            return
+
+        if "Playlists" in devname and Command == "Set Level":
+            idx = int(Level) - 1
+            if 0 <= idx < len(self.playlists):
+                pl = self.playlists[idx]
+                self.send_playercmd(mac, ["playlist", "play", pl["playlist"]])
+                Domoticz.Log(f"Started playlist '{pl['playlist']}' on {name}")
+            return
 
 
 _plugin = LMSPlugin()
