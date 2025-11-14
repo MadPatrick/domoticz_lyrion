@@ -1,8 +1,8 @@
 """
-<plugin key="LyrionMediaServer" name="Lyrion Media Server" author="MadPatrick" version="1.4.6" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_LMS">
+<plugin key="LyrionMediaServer" name="Lyrion Media Server" author="MadPatrick" version="1.5.0" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_LMS">
     <description>
         <h2>Lyrion Media Server Plugin - Extended</h2>
-        <p>Version 1.4.6</p>
+        <p>Version 1.5.0</p>
         <p>Detects players, creates devices, and provides:</p>
         <ul>
             <li>Power / Play / Pause / Stop</li>
@@ -51,29 +51,26 @@ class LMSPlugin:
         self.debug = False
 
     def onStart(self):
-        Domoticz.Log("LMS plugin gestart (v1.4.6).")
+        Domoticz.Log("LMS plugin started (v1.5.0.")
 
-        # Default image for devices
         _IMAGE = "lms"
 
-        # Load image if missing
         if _IMAGE not in Images:
-            Domoticz.Log(f"LMS icons not found, loading {_IMAGE}.zip ...")
+            Domoticz.Log(f"LMS icons not found, loading { _IMAGE }.zip ...")
             Domoticz.Image(f"{_IMAGE}.zip").Create()
 
-        # Verify that the image is loaded
         if _IMAGE in Images:
             self.imageID = Images[_IMAGE].ID
-            Domoticz.Log(f"LMS icons Loaded (ImageID={self.imageID})")
+            Domoticz.Log(f"LMS icons loaded (ImageID={self.imageID})")
         else:
-            Domoticz.Error(f"Could not load LMS icon pack '{_IMAGE}.zip'!")        
+            Domoticz.Error(f"Unable to load LMS icon pack '{_IMAGE}.zip'!")
 
         self.pollInterval = int(Parameters.get("Mode1", 30))
         self.max_playlists = int(Parameters.get("Mode2", 50))
         self.debug = Parameters.get("Mode3", "False").lower() == "true"
 
         if self.debug:
-            Domoticz.Log("DEBUG mode activated.")
+            Domoticz.Log("Debug logging enabled.")
 
         self.url = f"http://{Parameters['Address']}:{Parameters['Port']}/jsonrpc.js"
         username = Parameters.get("Username", "")
@@ -82,10 +79,10 @@ class LMSPlugin:
 
         Domoticz.Heartbeat(10)
         self.nextPoll = time.time() + 10
-        Domoticz.Log("LMS plugin initialisation delayed until first heartbeat.")
+        Domoticz.Log("LMS plugin initialization delayed until first heartbeat.")
 
     def onStop(self):
-        Domoticz.Log("LMS plugin gestopt.")
+        Domoticz.Log("LMS plugin stopped.")
 
     def onHeartbeat(self):
         if time.time() >= self.nextPoll:
@@ -102,10 +99,10 @@ class LMSPlugin:
             r.raise_for_status()
             result = r.json().get("result")
             if self.debug:
-                Domoticz.Log(f"DEBUG LMS query player={player}, cmd={cmd_array}, result={result}")
+                Domoticz.Log(f"DEBUG LMS Query: player={player}, command={cmd_array}, result={result}")
             return result
         except Exception as e:
-            Domoticz.Error(f"LMS query fout ({player}): {e}")
+            Domoticz.Error(f"LMS query error ({player}): {e}")
             return None
 
     def get_serverstatus(self):
@@ -130,19 +127,17 @@ class LMSPlugin:
         s2 = str(text)[:128].replace('"', "'")
         cmd = ["show", f"line1:{s1}", f"line2:{s2}", f"duration:{duration}", "brightness:4", "font:huge"]
         self.send_playercmd(playerid, cmd)
-        Domoticz.Log(f"{playerid}: Displaytext send ({s1} / {s2})")
+        Domoticz.Log(f"{playerid}: Display text sent ({s1} / {s2})")
 
     # -------------------------
     # Device helpers
     # -------------------------
     def create_player_devices(self, name, mac):
-
         base = name
         unit = 1
         while unit in Devices:
             unit += 10
 
-        # MAIN SELECTOR
         opts_main = {
             "LevelNames": "Off|Pause|Play|Stop",
             "LevelActions": "||||",
@@ -160,19 +155,16 @@ class LMSPlugin:
             Used=1
         ).Create()
 
-        # VOLUME
         Domoticz.Device(
             Name=f"{base} Volume",
             Unit=unit + 1,
-            Type=244,          # Custom device (dimmer capable)
-            Subtype=73,        # Percentage slider
-            Switchtype=7,      # Dimmer → zorgt voor slider, geen schakelaar
-            #Image=self.imageID,
+            Type=244,
+            Subtype=73,
+            Switchtype=7,
             Description=mac,
             Used=1
         ).Create()
 
-        # TRACK INFO
         Domoticz.Device(
             Name=f"{base} Track",
             Unit=unit + 2,
@@ -182,7 +174,6 @@ class LMSPlugin:
             Used=1
         ).Create()
 
-        # ACTIONS DEVICE
         opts_act = {
             "LevelNames": "None|SendText|Sync to this|Unsync",
             "LevelActions": "||",
@@ -200,7 +191,6 @@ class LMSPlugin:
             Used=1
         ).Create()
 
-        # SHUFFLE
         opts_shuffle = {
             "LevelNames": "Off|Songs|Albums",
             "LevelActions": "||",
@@ -218,7 +208,6 @@ class LMSPlugin:
             Used=1
         ).Create()
 
-        # REPEAT
         opts_repeat = {
             "LevelNames": "Off|Track|Playlist",
             "LevelActions": "||",
@@ -275,7 +264,9 @@ class LMSPlugin:
                 "refid": int(p.get("id", 0)) % 256
             } for p in pl[:self.max_playlists]]
 
-        levelnames = "Select|" + "|".join(p["playlist"] for p in self.playlists) if self.playlists else "Select|No playlists"
+        levelnames = "Select|" + "|".join(
+            p["playlist"] for p in self.playlists
+        ) if self.playlists else "Select|No playlists"
 
         opts = {
             "LevelNames": levelnames,
@@ -299,34 +290,47 @@ class LMSPlugin:
                 dev.Update(nValue=0, sValue="0", Options=opts)
 
     def play_playlist_by_level(self, Level):
+
         if Level < 10:
-            Domoticz.Log("LMS: Playlist 'Select' chosen.")
+            Domoticz.Log("Playlist selection: 'Select' chosen (no playlist started).")
             return
 
         idx = int(Level // 10) - 1
+
         if idx < 0 or idx >= len(self.playlists):
-            Domoticz.Log(f"LMS: Invalid playlist index {idx}")
+            Domoticz.Log(f"Playlist selection error: invalid index {idx}.")
             return
 
         pl = self.playlists[idx]
         playlist_name = pl["playlist"]
 
-        Domoticz.Log(f"LMS: Playlist selected '{playlist_name}'")
+        Domoticz.Log(f"Playlist selected: {playlist_name}")
+
         self.start_playlist_on_first_player(playlist_name)
 
     def start_playlist_on_first_player(self, playlist_name):
         if not self.players:
-            Domoticz.Log("LMS: No players available to start playlist.")
+            Domoticz.Log("Cannot start playlist: no LMS players online.")
             return
 
         first = self.players[0]
         mac = first.get("playerid")
         name = first.get("name", "Unknown")
 
-        Domoticz.Log(f"LMS: Start playlist '{playlist_name}' on '{name}' ({mac})")
+        Domoticz.Log(f"Starting playlist '{playlist_name}' on player {name} ({mac})")
 
-        self.send_playercmd(mac, ["playlist", "add", playlist_name])
+        # Clear queue first
+        Domoticz.Log("Clearing current playlist queue...")
+        self.send_playercmd(mac, ["playlist", "clear"])
+
+        # Load playlist by name
+        Domoticz.Log(f"Loading playlist '{playlist_name}'...")
+        self.send_playercmd(mac, ["playlist", "load", playlist_name])
+
+        # Start playback
+        Domoticz.Log("Starting playback...")
         self.send_playercmd(mac, ["play"])
+
         self.nextPoll = time.time() + 1
 
     # -------------------------
@@ -340,16 +344,13 @@ class LMSPlugin:
 
         self.players = server.get("players_loop", [])
 
-        # Nieuwe spelers: devices aanmaken
         for p in self.players:
             name, mac = p.get("name", "Unknown"), p.get("playerid", "")
             if mac and not self.find_player_devices(mac):
                 self.create_player_devices(name, mac)
 
-        # Playlists-device
         self.reload_playlists()
 
-        # Status per player
         for p in self.players:
             name, mac = p.get("name"), p.get("playerid")
             if not mac:
@@ -368,7 +369,6 @@ class LMSPlugin:
             power = int(st.get("power", 0))
             mode = st.get("mode", "stop")
 
-            # MAIN DEVICE
             sel_level = {"pause": 10, "play": 20, "stop": 30}.get(mode, 0)
             if power == 0:
                 sel_level = 0
@@ -380,7 +380,6 @@ class LMSPlugin:
                 if dev_main.nValue != new_n or dev_main.sValue != new_s:
                     dev_main.Update(nValue=new_n, sValue=new_s)
 
-            # VOLUME – volgt LMS waarde
             if vol in Devices:
                 dev_vol = Devices[vol]
 
@@ -404,36 +403,50 @@ class LMSPlugin:
                     if self.debug:
                         Domoticz.Log(f"DEBUG: Volume updated from LMS: {mixer_vol}")
 
-            # TEXT OUTPUT
+            # ----- TEXT / TITLE / ARTIST / ALBUM -----
             if text in Devices:
                 dev_text = Devices[text]
-                title = st.get("title") or st.get("current_title") or ""
+
+                # basisvelden
+                title = (
+                    st.get("title")
+                    or st.get("current_title")
+                    or st.get("track", "")
+                    or ""
+                )
                 artist = st.get("artist") or ""
                 album = st.get("album") or ""
 
+                # fallback: playlist_loop[0]
+                pl_loop = st.get("playlist_loop")
+                if (not title) and isinstance(pl_loop, list) and len(pl_loop) > 0:
+                    entry = pl_loop[0]
+                    title = entry.get("title", title)
+                    if not artist:
+                        artist = entry.get("artist", artist)
+                    if not album:
+                        album = entry.get("album", album)
+
                 if not title:
-                    title = "(onbekend nummer)"
+                    title = "(unknown track)"
 
                 if power == 0:
-                    label = "Uit"
+                    label = " "
                 elif mode == "play":
                     label = title
                     if artist:
                         label += f" - {artist}"
-                    if album:
-                        label += f" ({album})"
                 elif mode == "pause":
                     label = title
                 else:
-                    label = "Gestopt"
+                    label = "Stopped"
 
                 label = label[:255]
 
                 if dev_text.sValue != label:
                     dev_text.Update(nValue=0, sValue=label)
-                    Domoticz.Log(f"LMS: Player '{name}' ({mac}) - Now playing: '{label}'")
+                    Domoticz.Log(f"Player '{name}' ({mac}) - Now playing: '{label}'")
 
-            # SHUFFLE
             if shuffle in Devices:
                 dev_shuffle = Devices[shuffle]
                 try:
@@ -444,7 +457,6 @@ class LMSPlugin:
                 if dev_shuffle.sValue != str(shuffle_level) or dev_shuffle.nValue != 0:
                     dev_shuffle.Update(nValue=0, sValue=str(shuffle_level))
 
-            # REPEAT
             if repeat in Devices:
                 dev_repeat = Devices[repeat]
                 try:
@@ -456,7 +468,7 @@ class LMSPlugin:
                     dev_repeat.Update(nValue=0, sValue=str(repeat_level))
 
     # -------------------------
-    # Handling commands
+    # Commands
     # -------------------------
     def onCommand(self, Unit, Command, Level, Hue):
 
@@ -470,13 +482,11 @@ class LMSPlugin:
         if self.debug:
             Domoticz.Log(f"DEBUG onCommand: Unit={Unit}, Name={devname}, Command={Command}, Level={Level}, mac={mac}")
 
-        # PLAYLIST CONTROL
         if Unit == PLAYLISTS_DEVICE_UNIT and Command == "Set Level":
-            Domoticz.Log(f"LMS: Playlist selection level {Level}")
+            Domoticz.Log(f"Playlist selector level: {Level}")
             self.play_playlist_by_level(Level)
             return
 
-        # SHUFFLE SELECTOR
         if "Shuffle" in devname:
             if Command == "Set Level":
                 mode = int(Level // 10)
@@ -485,13 +495,11 @@ class LMSPlugin:
                 Level = 0
             else:
                 return
-
             self.send_playercmd(mac, ["playlist", "shuffle", str(mode)])
             dev.Update(nValue=0, sValue=str(Level))
-            Domoticz.Log(f"LMS: Player '{devname}' ({mac}) - Shuffle set to {mode}")
+            Domoticz.Log(f"Shuffle set to {mode} for player {devname}")
             return
 
-        # REPEAT SELECTOR
         if "Repeat" in devname:
             if Command == "Set Level":
                 mode = int(Level // 10)
@@ -500,34 +508,32 @@ class LMSPlugin:
                 Level = 0
             else:
                 return
-
             self.send_playercmd(mac, ["playlist", "repeat", str(mode)])
             dev.Update(nValue=0, sValue=str(Level))
-            Domoticz.Log(f"LMS: Player '{devname}' ({mac}) - Repeat set to {mode}")
+            Domoticz.Log(f"Repeat set to {mode} for player {devname}")
             return
 
-        # POWER
-        if Command in ["On", "Off"] and not any(x in devname for x in ("Volume", "Track", "Actions", "Shuffle", "Repeat")):
+        if Command in ["On", "Off"] and not any(
+            x in devname for x in ("Volume", "Track", "Actions", "Shuffle", "Repeat")
+        ):
             self.send_playercmd(mac, ["power", "1" if Command == "On" else "0"])
             dev.Update(nValue=1 if Command == "On" else 0, sValue="")
-            Domoticz.Log(f"LMS: Player '{devname}' ({mac}) - Power {Command}")
+            Domoticz.Log(f"Power {Command} sent to {devname}")
             return
 
-        # VOLUME
         if "Volume" in devname and Command == "Set Level":
             self.send_playercmd(mac, ["mixer", "volume", str(Level)])
             new_n = 1 if Level > 0 else 0
             dev.Update(nValue=new_n, sValue=str(Level))
-            Domoticz.Log(f"LMS: Player '{devname}' ({mac}) - Volume set to {Level}%")
+            Domoticz.Log(f"Volume set to {Level}% for {devname}")
             return
 
-        # PLAY / PAUSE / STOP
         if Command == "Set Level":
             btn_cmd = {10: "pause.single", 20: "play.single", 30: "stop"}.get(Level)
             if btn_cmd:
                 self.send_button(mac, btn_cmd)
                 dev.Update(nValue=1, sValue=str(Level))
-                Domoticz.Log(f"LMS: Player '{devname}' ({mac}) - Command '{btn_cmd}'")
+                Domoticz.Log(f"Command '{btn_cmd}' sent to {devname}")
 
 
 # -------------------------
