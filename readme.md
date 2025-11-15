@@ -55,4 +55,5 @@ cd /home/<user>/domoticz/plugins
 git clone https://github.com/MadPatrick/domoticz_LMS.git
 sudo systemctl restart domoticz
 
-https://github.com/MadPatrick/domoticz_Lyrion
+<img width="1492" height="435" alt="lyrion" src="https://github.com/user-attachments/assets/97ed5eb7-ae45-46eb-8183-aa441df9b625" />
+
