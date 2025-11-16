@@ -1,5 +1,5 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="1.6.2" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_LMS">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="1.6.2" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
         <h2>Lyrion Music Server Plugin - Extended</h2>
         <p>Version 1.6.2</p>
