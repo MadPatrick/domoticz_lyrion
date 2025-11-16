@@ -115,9 +115,10 @@ class LMSPlugin:
         try:
             r = requests.post(self.url, json=data, auth=self.auth, timeout=10)
             r.raise_for_status()
-            return r.json().get("result")
+            result = r.json().get("result")
             if self.debug:
                 Domoticz.Log(f"DEBUG Query: player={player}, cmd={cmd_array}, result={result}")
+            return result
         except Exception as e:
             Domoticz.Error(f"LMS query error: {e}")
             return None
@@ -136,7 +137,6 @@ class LMSPlugin:
 
     def send_button(self, playerid, button):
         return self.send_playercmd(playerid, ["button", button])
-
 
     #
     # DISPLAY TEXT
@@ -435,7 +435,7 @@ class LMSPlugin:
                     dev_vol.Update(nValue=1 if new > 0 else 0, sValue=str(new))
 
             #
-            # TRACK — *** FIXED METADATA HANDLING ***
+            # TRACK — FIXED METADATA HANDLING
             #
             if text in Devices:
                 dev_text = Devices[text]
@@ -447,21 +447,20 @@ class LMSPlugin:
                 title = ""
                 artist = ""
 
-                # 1) remoteMeta — BEST source for radio streams
+                # 1) remoteMeta — best for radio streams
                 if remote and rm:
                     title = rm.get("title", "") or title
                     artist = rm.get("artist", "") or artist
 
-                # 2) playlist_loop fallback (also works for streams)
+                # 2) playlist_loop fallback
                 if not title and isinstance(pl, list) and pl:
                     title = pl[0].get("title", "") or title
                     artist = pl[0].get("artist", "") or artist
 
-                # 3) fallback: station name (current_title)
+                # 3) fallback: station name
                 if not title:
                     title = st.get("current_title", "")
 
-                # Build the display label
                 if not title:
                     label = " "
                 elif artist:
@@ -471,9 +470,7 @@ class LMSPlugin:
 
                 label = label[:255]
 
-                #
-                # TRACK CHANGE DETECTION
-                #
+                # Track change detection
                 track_index = st.get("playlist_cur_index")
                 player_key = mac
                 changed = False
@@ -486,9 +483,6 @@ class LMSPlugin:
                         changed = True
                         self.lastTrackIndex[player_key] = track_index
 
-                #
-                # Update device if text OR track changed
-                #
                 if dev_text.sValue != label or changed:
                     dev_text.Update(nValue=0, sValue=label)
 
@@ -547,13 +541,16 @@ class LMSPlugin:
                 f"Command={Command}, Level={Level}, mac={mac}"
             )
 
-
+        # ---------------------------------
         # Playlist selector
+        # ---------------------------------
         if Unit == PLAYLISTS_DEVICE_UNIT and Command == "Set Level":
             self.play_playlist_by_level(Level)
             return
 
+        # ---------------------------------
         # Actions selector
+        # ---------------------------------
         if "Actions" in devname and Command == "Set Level":
 
             if Level == 10:
@@ -576,53 +573,59 @@ class LMSPlugin:
                 Domoticz.Log(f"Unsync: {devname} ({mac})")
                 return
 
-        # Shuffle
+        # ---------------------------------
+        # SHUFFLE DEVICE
+        # ---------------------------------
         if "Shuffle" in devname:
             if Command == "Set Level":
                 mode = int(Level // 10)
-            else:
+            elif Command == "Off":
                 mode = 0
-            self.send_playercmd(mac, ["playlist", "shuffle", str(mode)])
-            dev.Update(nValue=0, sValue=str(Level))
-            if "Shuffle" in devname:
-                if Command == "Set Level":
-                    mode = int(Level // 10)
-                else:
-                    mode = 0
-
-                self.send_playercmd(mac, ["playlist", "shuffle", str(mode)])
-                dev.Update(nValue=0, sValue=str(Level))
-
-                # Tekstuele mapping voor log
-                shuffle_text = {0: "Off", 1: "Songs", 2: "Albums"}.get(mode, f"Unknown ({mode})")
-                Domoticz.Log(f"Lyrion: Shuffle set to: {shuffle_text}")
+                Level = 0
+            else:
                 return
 
-        # Repeat
+            self.send_playercmd(mac, ["playlist", "shuffle", str(mode)])
+            dev.Update(nValue=0, sValue=str(Level))
+
+            # Naam per mode
+            mode_name = {
+                0: "Off",
+                1: "Songs",
+                2: "Albums"
+            }.get(mode, f"Unknown ({mode})")
+
+            Domoticz.Log(f"Shuffle set to : {mode_name}")
+            return
+
+        # ---------------------------------
+        # REPEAT DEVICE
+        # ---------------------------------
         if "Repeat" in devname:
             if Command == "Set Level":
                 mode = int(Level // 10)
-            else:
+            elif Command == "Off":
                 mode = 0
-            self.send_playercmd(mac, ["playlist", "repeat", str(mode)])
-            dev.Update(nValue=0, sValue=str(Level))
-            if "Repeat" in devname:
-                if Command == "Set Level":
-                    mode = int(Level // 10)
-                else:
-                    mode = 0
+                Level = 0
+            else:
+                return
 
-            # Stuur command
             self.send_playercmd(mac, ["playlist", "repeat", str(mode)])
             dev.Update(nValue=0, sValue=str(Level))
 
-            # MAPPING van cijfers naar tekst
-            repeat_text = {0: "Off", 1: "Track", 2: "Playlist"}.get(mode, f"Unknown ({mode})")
+            # Naam bij mode
+            mode_name = {
+                0: "Off",
+                1: "Track",
+                2: "Playlist"
+            }.get(mode, f"Unknown ({mode})")
 
-            Domoticz.Log(f"Lyrion: Repeat set to: {repeat_text}")
+            Domoticz.Log(f"Repeat set to : {mode_name}")
             return
 
+        # ---------------------------------
         # Power
+        # ---------------------------------
         if Command in ["On", "Off"] and not any(
             x in devname for x in ("Volume", "Track", "Actions", "Shuffle", "Repeat")
         ):
@@ -631,20 +634,28 @@ class LMSPlugin:
             Domoticz.Log(f"Power {Command}")
             return
 
-        # Volume
+        # VOLUME
         if "Volume" in devname and Command == "Set Level":
             self.send_playercmd(mac, ["mixer", "volume", str(Level)])
             dev.Update(nValue=1 if Level > 0 else 0, sValue=str(Level))
-            Domoticz.Log(f"Volume set to {Level}%") 
+            Domoticz.Log(f"LMS Volume: set to {Level}%")
             return
 
-        # Play / Pause / Stop
-        if Command == "Set Level":
-            btn = {10: "pause.single", 20: "play.single", 30: "stop"}.get(Level)
-            if btn:
-                self.send_button(mac, btn)
+        # PLAY / PAUSE / STOP op hoofddevice
+        if Command == "Set Level" and not any(
+            x in devname for x in ("Volume", "Track", "Actions", "Shuffle", "Repeat")
+        ):
+            btn_map = {
+                10: ("pause.single", "Pause"),
+                20: ("play.single", "Play"),
+                30: ("stop", "Stop")
+            }
+
+            if Level in btn_map:
+                cmd, label = btn_map[Level]
+                self.send_button(mac, cmd)
                 dev.Update(nValue=1, sValue=str(Level))
-                Domoticz.Log(f"Command '{btn_cmd}'")
+                Domoticz.Log(f"LMS Player: {label}")
                 return
 
 
@@ -664,4 +675,3 @@ def onHeartbeat():
 
 def onCommand(Unit, Command, Level, Hue):
     _plugin.onCommand(Unit, Command, Level, Hue)
-
