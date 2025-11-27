@@ -1,14 +1,14 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.0.4" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.0.5" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
         <h2>Lyrion Music Server Plugin - Extended</h2>
-        <p>Version 2.0.4</p>
+        <p>Version 2.0.5</p>
         <p>Detects players, creates devices, and provides:</p>
         <ul>
             <li>Power / Play / Pause / Stop</li>
             <li>Volume (Dimmer)</li>
             <li>Track info (Text)</li>
-            <li>Playlists (Selector) - per player</li>
+            <li>Playlists (Selector) - per player (player-specific list)</li>
             <li>Sync / Unsync</li>
             <li>Display text (via Actions device)</li>
             <li>Shuffle (Selector)</li>
@@ -21,11 +21,11 @@
         <param field="Port" label="Port" width="100px" required="true" default="9000"/>
         <param field="Username" label="Username" width="150px"/>
         <param field="Password" label="Password" width="150px" password="true"/>
-        <param field="Mode1" label="Polling interval (sec)" width="150px" default="10">
+        <param field="Mode1" label="Polling interval (sec)" width="150px" default="20">
             <options>
+                <option label="20 sec" value="20"/>
                 <option label="5 sec" value="5"/>
                 <option label="10 sec" value="10"/>
-                <option label="20 sec" value="20"/>
                 <option label="30 sec" value="30"/>
                 <option label="60 sec" value="60"/>
             </options>
@@ -57,8 +57,7 @@ class LMSPlugin:
         self.nextPoll = 0
         self.players = []
 
-        # playlist cache (server-wide list, used for each player)
-        self.playlists = []   # list of dicts: {id, playlist, refid}
+        # per-player playlists; no more global list
         self.max_playlists = 50
 
         self.imageID = 0
@@ -99,17 +98,15 @@ class LMSPlugin:
     # ------------------------------------------------------------------
     def onStart(self):
         self.log(f"Plugin version {Parameters['Version']} is starting up.")
-        
-        _IMAGE = "lyrion"
 
+        _IMAGE = "lyrion"
         creating_new_icon = _IMAGE not in Images
-        
         Domoticz.Image(f"{_IMAGE}.zip").Create()
 
         if _IMAGE in Images:
             self.imageID = Images[_IMAGE].ID
             if creating_new_icon:
-                self.log(f"Icons created and loaded.")
+                self.log("Icons created and loaded.")
             else:
                 self.log(f"Icons found in database (ImageID={self.imageID}).")
         else:
@@ -159,9 +156,6 @@ class LMSPlugin:
 
     def get_status(self, playerid):
         return self.lms_query_raw(playerid, ["status", "-", 1, "tags:adclmntyK"])
-
-    def get_playlists(self):
-        return self.lms_query_raw("", ["playlists", 0, 999])
 
     def send_playercmd(self, playerid, cmd_array):
         return self.lms_query_raw(playerid, cmd_array)
@@ -347,42 +341,37 @@ class LMSPlugin:
         return None
 
     # ------------------------------------------------------------------
-    # PLAYLIST MANAGEMENT
+    # PLAYER-SPECIFIC PLAYLISTS
     # ------------------------------------------------------------------
-    def reload_playlists(self):
+    def get_player_playlists(self, mac):
+        """
+        Haal playlists op die zichtbaar zijn voor deze specifieke speler.
+        Let op: sommige LMS setups filteren playlists per player.
+        """
+        result = self.send_playercmd(mac, ["playlists", 0, self.max_playlists])
+        if not result:
+            return []
 
-        root = self.get_playlists()
+        pl_loop = result.get("playlists_loop", []) or []
+        playlists = []
+        for p in pl_loop[: self.max_playlists]:
+            name = p.get("playlist", "")
+            plid = p.get("id")
+            if name:
+                playlists.append({"id": plid, "playlist": name})
+        return playlists
 
-        if not root:
-            self.playlists = []
-            return
-
-        # root kan lijst OF dict zijn
-        if isinstance(root, list):
-            pl = root
-        else:
-            pl = root.get("playlists_loop", [])
-
-        self.playlists = [
-            {
-                "id": p.get("id"),
-                "playlist": p.get("playlist", ""),
-                "refid": int(p.get("id", 0)) % 256,
-            }
-            for p in pl[: self.max_playlists]
-        ]
-
-    def update_player_playlist_selector(self, plsel_unit, active_playlist_name=None):
+    def update_player_playlist_selector(self, plsel_unit, playlists, active_playlist_name=None):
         """Update LevelNames + zet level op actieve playlist indien bekend."""
         if plsel_unit not in Devices:
             return
 
         dev_pl = Devices[plsel_unit]
 
-        if not self.playlists:
+        if not playlists:
             levelnames = "Select|No playlists"
         else:
-            levelnames = "Select|" + "|".join(p["playlist"] for p in self.playlists)
+            levelnames = "Select|" + "|".join(p["playlist"] for p in playlists)
 
         opts = {
             "LevelNames": levelnames,
@@ -396,22 +385,16 @@ class LMSPlugin:
             self.log(f"Playlist selector updated for Unit {plsel_unit}.")
 
         # Actieve playlist in selector zetten (per speler)
-        if active_playlist_name:
-            found = False
-            for idx, pinfo in enumerate(self.playlists):
+        if active_playlist_name and playlists:
+            for idx, pinfo in enumerate(playlists):
                 if pinfo["playlist"] == active_playlist_name:
                     expected_level = (idx + 1) * 10
-                    found = True
                     if dev_pl.sValue != str(expected_level):
                         self.log(
                             f"Setting playlist selector (Unit {plsel_unit}) to level {expected_level} for '{active_playlist_name}'"
                         )
                         dev_pl.Update(nValue=0, sValue=str(expected_level))
                     break
-            if not found:
-                self.log(
-                    f"Active playlist '{active_playlist_name}' not in selector list (Unit {plsel_unit})"
-                )
         else:
             # Geen playlist actief -> reset naar Select
             if dev_pl.sValue != "0":
@@ -426,12 +409,13 @@ class LMSPlugin:
         if Level < 10:
             return
 
+        playlists = self.get_player_playlists(mac)
         idx = int(Level // 10) - 1
-        if idx < 0 or idx >= len(self.playlists):
+        if idx < 0 or idx >= len(playlists):
             self.error("Invalid playlist index.")
             return
 
-        pl = self.playlists[idx]
+        pl = playlists[idx]
         playlist_name = pl["playlist"]
         playlist_id = pl["id"]
 
@@ -464,9 +448,6 @@ class LMSPlugin:
             mac = p.get("playerid", "")
             if mac and not self.find_player_devices(mac):
                 self.create_player_devices(name, mac)
-
-        # reload playlists once per poll
-        self.reload_playlists()
 
         #------------------------------------------------------------------
         # PROCESS EACH PLAYER
@@ -517,7 +498,7 @@ class LMSPlugin:
 
                 if new != old:
                     dev_vol.Update(nValue=1 if new > 0 else 0, sValue=str(new))
-    
+
             #------------------------------------------------------------------
             # TRACK — metadata handling (radio + lokaal)
             #------------------------------------------------------------------
@@ -528,7 +509,8 @@ class LMSPlugin:
                     if dev_text.sValue != " ":
                         dev_text.Update(nValue=0, sValue=" ")
                     # ook playlist selector resetten als speler uit is:
-                    self.update_player_playlist_selector(plsel, active_playlist_name=None)
+                    player_pl = self.get_player_playlists(mac)
+                    self.update_player_playlist_selector(plsel, player_pl, active_playlist_name=None)
                     continue
 
                 remote = st.get("remote", 0)
@@ -583,12 +565,33 @@ class LMSPlugin:
                 except Exception:
                     shuffle_state = 0
                 level = shuffle_state * 10
+
                 if dev_shuffle.sValue != str(level):
+                    mode_name = {0: "Off", 1: "Songs", 2: "Albums"}.get(shuffle_state, shuffle_state)
+                    Domoticz.Log(f"Shuffle changed to : {mode_name}")
                     dev_shuffle.Update(nValue=0, sValue=str(level))
 
             #------------------------------------------------------------------
-            # PLAYLIST SELECTOR UPDATE (per speler)
+            # REPEAT
             #------------------------------------------------------------------
+            if repeat in Devices:
+                dev_repeat = Devices[repeat]
+                try:
+                    repeat_state = int(st.get("playlist repeat", 0))
+                except Exception:
+                    repeat_state = 0
+
+                level = repeat_state * 10   # 0=Off,1=Track,2=Playlist
+                if dev_repeat.sValue != str(level):
+                    mode_name = {0: "Off", 1: "Track", 2: "Playlist"}.get(repeat_state, repeat_state)
+                    Domoticz.Log(f"Repeat changed to : {mode_name}")
+                    dev_repeat.Update(nValue=0, sValue=str(level))
+
+            #------------------------------------------------------------------
+            # PLAYLIST SELECTOR UPDATE (per speler, player-specific list)
+            #------------------------------------------------------------------
+            player_pl = self.get_player_playlists(mac)
+
             playlist_tracks = st.get("playlist_tracks", 0)
             playlist_name = st.get("playlist_name", "")
             remote = st.get("remote", 0)
@@ -600,9 +603,9 @@ class LMSPlugin:
             )
 
             if playlist_is_active:
-                self.update_player_playlist_selector(plsel, active_playlist_name=playlist_name)
+                self.update_player_playlist_selector(plsel, player_pl, active_playlist_name=playlist_name)
             else:
-                self.update_player_playlist_selector(plsel, active_playlist_name=None)
+                self.update_player_playlist_selector(plsel, player_pl, active_playlist_name=None)
 
         #------------------------------------------------------------------
         # INITIALIZATION LOG
@@ -612,7 +615,7 @@ class LMSPlugin:
             self.log(f" Players           : {len(self.players)}")
             device_count = len(Devices)
             self.log(f" Devices           : {device_count}")
-            self.log(f" Playlists         : {len(self.playlists)}")
+            self.log(f" Max playlists/player : {self.max_playlists}")
             self.log(f" Poll interval     : {self.pollInterval} sec")
             self.initialized = True
 
@@ -632,9 +635,8 @@ class LMSPlugin:
             f"onCommand: Unit={Unit}, Name={devname}, Command={Command}, Level={Level}, mac={mac}"
         )
 
-        # Playlist selector per speler
+        # Playlist selector per speler (player-specific list)
         if "Playlists" in devname and Command == "Set Level":
-            # Level 0 = Select (reset lokaal, geen LMS actie)
             if Level == 0:
                 dev.Update(nValue=0, sValue="0")
                 return
@@ -793,18 +795,14 @@ class LMSPlugin:
 # -------------------------------------------------------------------
 _plugin = LMSPlugin()
 
-
 def onStart():
     _plugin.onStart()
-
 
 def onStop():
     _plugin.onStop()
 
-
 def onHeartbeat():
     _plugin.onHeartbeat()
-
 
 def onCommand(Unit, Command, Level, Hue):
     _plugin.onCommand(Unit, Command, Level, Hue)
