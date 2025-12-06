@@ -1,8 +1,8 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.0.5" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.0.6" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
         <h2>Lyrion Music Server Plugin - Extended</h2>
-        <p>Version 2.0.5</p>
+        <p>Version 2.0.6</p>
         <p>Detects players, creates devices, and provides:</p>
         <ul>
             <li>Power / Play / Pause / Stop</li>
@@ -534,7 +534,10 @@ class LMSPlugin:
                 if not title:
                     label = " "
                 elif artist:
-                    label = f"&#127908; {artist}<br>&#127925; {title}"
+                    label = (
+                        f"&#127908; <span style='color:#FFFF00;'>{artist}</span>"
+                        f"<br>&#127925; <span style='color:#FFFACD;'>{title}</span>"
+                    )                
                 else:
                     label = title
 
