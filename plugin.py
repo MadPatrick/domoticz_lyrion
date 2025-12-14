@@ -142,7 +142,7 @@ class LMSPlugin:
     def lms_query_raw(self, player, cmd_array):
         data = {"id": 1, "method": "slim.request", "params": [player, cmd_array]}
         try:
-            r = requests.post(self.url, json=data, auth=self.auth, timeout=5)
+            r = requests.post(self.url, json=data, auth=self.auth, timeout=10)
             r.raise_for_status()
             result = r.json().get("result")
             self.debug_log(f"Query: player={player}, cmd={cmd_array}, result={result}")
@@ -382,7 +382,8 @@ class LMSPlugin:
         # Update options indien veranderd
         if dev_pl.Options.get("LevelNames", "") != levelnames:
             dev_pl.Update(nValue=0, sValue=dev_pl.sValue, Options=opts)
-            self.log(f"Playlist selector updated for Unit {plsel_unit}.")
+            dev_pl = Devices[plsel_unit]
+            self.log(f"Playlist selector updated for '{dev_pl.Name}'.")
 
         # Actieve playlist in selector zetten (per speler)
         if active_playlist_name and playlists:
@@ -391,7 +392,7 @@ class LMSPlugin:
                     expected_level = (idx + 1) * 10
                     if dev_pl.sValue != str(expected_level):
                         self.log(
-                            f"Setting playlist selector (Unit {plsel_unit}) to level {expected_level} for '{active_playlist_name}'"
+                            f"Setting playlist selector '{dev_pl.Name}' to level {expected_level} for '{active_playlist_name}'"
                         )
                         dev_pl.Update(nValue=0, sValue=str(expected_level))
                     break
