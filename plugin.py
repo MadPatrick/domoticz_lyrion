@@ -1,8 +1,8 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.0.9" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.1.0" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
         <h2><br/>Lyrion Music Server Plugin</h2>
-        <p>Version 2.0.9</p>
+        <p>Version 2.1.0</p>
         <p>Detects players, creates devices, and provides:</p>
         <ul>
             <li>Power / Play / Pause / Stop</li>
@@ -92,6 +92,13 @@ class LMSPlugin:
     # ------------------------------------------------------------------
     def log(self, msg):
         Domoticz.Log(msg)
+
+    def log_player(self, dev, action):
+        if not dev:
+            name = "Unknown"
+        else:
+            name = dev.Name.replace(" Control", "")
+        self.log(f"{name} | {action}")
 
     def log_player(self, dev, action):
         if not dev:
@@ -491,14 +498,21 @@ class LMSPlugin:
 
             if vol in Devices:
                 dev_vol = Devices[vol]
-                old = int(dev_vol.sValue) if dev_vol.sValue.isdigit() else 0
-                raw = st.get("mixer volume", old)
+                raw = st.get("mixer volume", 0)
                 try:
                     new = int(float(str(raw).replace("%", "")))
                 except:
-                    new = old
-                if new != old:
-                    dev_vol.Update(nValue=1 if new > 0 else 0, sValue=str(new))
+                    new = 0
+
+                # Log de waarde (dat werkte al)
+                Domoticz.Debug(f"LMS Player '{p.get('name')}' - Volume: {new}%")
+
+                # FORCEER UPDATE: 
+                # We gebruiken nValue=2 (Set Level) in plaats van 1 (On).
+                # Dit dwingt Domoticz om de sValue (het getal) te tonen op de tegel.
+                # We vergelijken ook of de sValue al klopt, om onnodige database writes te voorkomen.
+                if dev_vol.sValue != str(new) or dev_vol.nValue != (2 if new > 0 else 0):
+                    dev_vol.Update(nValue=2 if new > 0 else 0, sValue=str(new))
 
             if text in Devices:
                 dev_text = Devices[text]
@@ -665,14 +679,20 @@ class LMSPlugin:
     # ------------------------------------------------------------------
     # Command helpers
     # ------------------------------------------------------------------
+    def handle_volume(self, dev, mac, Level):
+        self.send_playercmd(mac, ["mixer", "volume", str(Level)])
+        # nValue=2 forceert de weergave van het getal (percentage) op de tegel
+        dev.Update(nValue=2 if Level > 0 else 0, sValue=str(Level))
+        self.log_player(dev, f"Volume {Level}%")
+
     def handle_actions(self, dev, mac, Level):
+        # Level 10: SendText, 20: Sync, 30: Unsync
         if Level == 10:
-            if not self.displayText:
-                self.error("Message text (Mode4) is empty.")
-                return
-            self.send_display_text(mac, self.displayText)
-            dev.Update(nValue=1, sValue=str(Level))
-            self.log_player(dev, "SendText")
+            if self.displayText:
+                self.send_display_text(mac, self.displayText)
+            else:
+                self.log("No display text configured in parameters (Mode4).")
+            dev.Update(nValue=0, sValue="0") # Reset naar 'None'
             return
 
         if Level == 20:
@@ -682,9 +702,6 @@ class LMSPlugin:
                 self.error("Cannot sync: server not responding.")
                 return
             players = server.get("players_loop", [])
-            if not players:
-                self.error("No players found to sync.")
-                return
             for p in players:
                 other_mac = p.get("playerid")
                 if other_mac and other_mac != mac:
@@ -704,11 +721,6 @@ class LMSPlugin:
         dev.Update(nValue=1 if Command == "On" else 0, sValue="")
         self.log_player(dev, f"Power {Command}")
 
-    def handle_volume(self, dev, mac, Level):
-        self.send_playercmd(mac, ["mixer", "volume", str(Level)])
-        dev.Update(nValue=1 if Level > 0 else 0, sValue=str(Level))
-        self.log_player(dev, f"Volume {Level}%")
-
     def handle_main_playback(self, dev, mac, Level):
         btn_map = {
             10: ("pause.single", "Pause"),
@@ -721,7 +733,6 @@ class LMSPlugin:
         self.send_button(mac, cmd)
         dev.Update(nValue=1, sValue=str(Level))
         self.log_player(dev, label)
-
 
 # -------------------------------------------------------------------
 # DOMOTICZ HOOKS
