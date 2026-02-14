@@ -538,51 +538,52 @@ class LMSPlugin:
             if text in Devices:
                 dev_text = Devices[text]
 
+                # Als speler uit of gestopt, Track Text leegmaken
                 if power == 0 or mode in ["stop", "pause"]:
-                    if dev_text.sValue != " ":
-                        dev_text.Update(nValue=0, sValue=" ")
+                    if dev_text.sValue != "":
+                        dev_text.Update(nValue=0, sValue="")
                     player_pl = self.get_player_playlists(mac)
                     self.update_player_playlist_selector(plsel, player_pl, active_playlist_name=None)
-                    #continue
-
-                remote = st.get("remote", 0)
-                rm = st.get("remoteMeta", {})
-                pl_loop = st.get("playlist_loop", [])
-
-                title = ""
-                artist = ""
-
-                if remote and rm:
-                    title = rm.get("title", "") or title
-                    artist = rm.get("artist", "") or artist
-
-                if not title and isinstance(pl_loop, list) and pl_loop:
-                    title = pl_loop[0].get("title", "") or title
-                    artist = pl_loop[0].get("artist", "") or artist
-
-                if not title:
-                    title = st.get("current_title", "")
-
-                if not title:
-                    label = " "
-                elif artist:
-                    label = f"&#127908; {artist}<br>&#127925; {title}"
                 else:
-                    label = title
+                    # Alleen bij aan: Track Text bijwerken
+                    remote = st.get("remote", 0)
+                    rm = st.get("remoteMeta", {})
+                    pl_loop = st.get("playlist_loop", [])
 
-                label = label[:255]
+                    title = ""
+                    artist = ""
 
-                track_index = st.get("playlist_cur_index")
-                player_key = mac
-                changed = False
+                    if remote and rm:
+                        title = rm.get("title", "") or title
+                        artist = rm.get("artist", "") or artist
 
-                if track_index is not None:
-                    if player_key not in self.lastTrackIndex or self.lastTrackIndex[player_key] != track_index:
-                        changed = True
-                        self.lastTrackIndex[player_key] = track_index
+                    if not title and isinstance(pl_loop, list) and pl_loop:
+                        title = pl_loop[0].get("title", "") or title
+                        artist = pl_loop[0].get("artist", "") or artist
 
-                if dev_text.sValue != label or changed:
-                    dev_text.Update(nValue=0, sValue=label)
+                    if not title:
+                        title = st.get("current_title", "")
+
+                    if not title:
+                        label = " "
+                    elif artist:
+                        label = f"&#127908; {artist}<br>&#127925; {title}"
+                    else:
+                        label = title
+
+                    label = label[:255]
+
+                    track_index = st.get("playlist_cur_index")
+                    player_key = mac
+                    changed = False
+
+                    if track_index is not None:
+                        if player_key not in self.lastTrackIndex or self.lastTrackIndex[player_key] != track_index:
+                            changed = True
+                            self.lastTrackIndex[player_key] = track_index
+
+                    if dev_text.sValue != label or changed:
+                        dev_text.Update(nValue=0, sValue=label)
 
             if shuffle in Devices:
                 dev_shuffle = Devices[shuffle]
