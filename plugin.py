@@ -1,8 +1,8 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.1.0" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.1.1" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
         <h2><br/>Lyrion Music Server Plugin</h2>
-        <p>Version 2.1.0</p>
+        <p>Version 2.1.1</p>
         <p>Detects players, creates devices, and provides:</p>
         <ul>
             <li>Power / Play / Pause / Stop</li>
@@ -85,6 +85,7 @@ class LMSPlugin:
 
         self.last_success = 0
         self.offline_grace = 15  # seconden
+        self.update_notified = False
 
 
     # ------------------------------------------------------------------
@@ -98,13 +99,6 @@ class LMSPlugin:
             name = "Unknown"
         else:
             name = dev.Name.replace(" Control", "")
-        self.log(f"{name} | {action}")
-
-    def log_player(self, dev, action):
-        if not dev:
-            name = "Unknown"
-        else:
-            name = dev.Name.replace(" Control", "")  # verwijdert suffix Control
         self.log(f"{name} | {action}")
 
     def debug_log(self, msg):
@@ -125,7 +119,7 @@ class LMSPlugin:
     def onStart(self):
         self.log(f"Starting Plugin version {Parameters['Version']}")
 
-        _IMAGE = "lyrion"
+        _IMAGE = "LMS"
         creating_new_icon = _IMAGE not in Images
         Domoticz.Image(f"{_IMAGE}.zip").Create()
 
@@ -172,12 +166,12 @@ class LMSPlugin:
             r = requests.post(self.url, json=data, auth=self.auth, timeout=10)
             r.raise_for_status()
             result = r.json().get("result")
-
+            self.debug_log(f"Query: player={player}, cmd={cmd_array}, result={result}")
             self.last_success = time.time()
 
             if self.server_was_online is not True:
                 if self.server_was_online is False:
-                    self.log("Lyrion Music Server is back ONLINE.")
+                    self.log("Lyrion Music Server is ONLINE.")
                 self.server_was_online = True
 
             return result
@@ -457,17 +451,41 @@ class LMSPlugin:
     def updateEverything(self):
         server = self.get_serverstatus()
         if not server:
-            # Geen extra log hier meer – melding komt al uit lms_query_raw
+            # Geen extra log hier – melding komt al uit lms_query_raw
             return
 
         self.players = server.get("players_loop", []) or []
+        
+        # --- Check voor nieuwe LMS versie ---
+        update_msg = server.get("newversion", "")
+        if update_msg:
+            if not self.update_notified:
+                import re
+                # HTML opschonen
+                clean_msg = re.sub('<[^<]+?>', '', update_msg)
+                clean_msg = clean_msg.split('Klik op hier')[0].strip()
+                
+                # 1. Stuur een Push Notificatie naar Domoticz
+                # Syntax: Notification(Name, Subject, Text, Subsystem, Priority, Sound)
+                Domoticz.Notification("Lyrion Update", 
+                                      "Er is een nieuwe LMS versie beschikbaar", 
+                                      clean_msg, 0, 0, "")
+                
+                # 2. Log het ook lokaal
+                Domoticz.Status(f"UPDATE NOTIFICATIE VERSTUURD: {clean_msg}")
+                
+                self.update_notified = True
+        else:
+            self.update_notified = False        
 
+        # Stap 1: Controleer en maak devices aan voor nieuwe spelers
         for p in self.players:
             name = p.get("name", "Unknown")
             mac = p.get("playerid", "")
             if mac and not self.find_player_devices(mac):
                 self.create_player_devices(name, mac)
 
+        # Stap 2: Update alle spelers
         for p in self.players:
             mac = p.get("playerid")
             if not mac:
@@ -482,11 +500,11 @@ class LMSPlugin:
 
             power = int(st.get("power", 0))
             mode = st.get("mode", "stop")
-
             sel_level = {"pause": 10, "play": 20, "stop": 30}.get(mode, 0)
             if power == 0:
                 sel_level = 0
 
+            # ---------- Main selector ----------
             if main in Devices:
                 dev_main = Devices[main]
                 n = 1 if power else 0
@@ -494,24 +512,29 @@ class LMSPlugin:
                 if dev_main.nValue != n or dev_main.sValue != s:
                     dev_main.Update(nValue=n, sValue=s)
 
+            # ---------- Volume ----------
             if vol in Devices:
                 dev_vol = Devices[vol]
                 raw = st.get("mixer volume", 0)
                 try:
-                    new = int(float(str(raw).replace("%", "")))
+                    # Zorg dat we een schone string vergelijken
+                    new_sval = str(int(float(str(raw).replace("%", ""))))
                 except:
-                    new = 0
+                    new_sval = "0"
 
-                # Log de waarde (dat werkte al)
-                Domoticz.Debug(f"LMS Player '{p.get('name')}' - Volume: {new}%")
+                # Check alleen of de sValue (het getal) verschilt
+                if dev_vol.sValue != new_sval:
+                    self.log(f"Volume changed to : {new_sval}%")
+                    # Update nValue naar 2 (On + Getal tonen) of 0 (Off)
+                    n_val = 2 if int(new_sval) > 0 else 0
+                    dev_vol.Update(nValue=n_val, sValue=new_sval)
 
-                # FORCEER UPDATE: 
-                # We gebruiken nValue=2 (Set Level) in plaats van 1 (On).
-                # Dit dwingt Domoticz om de sValue (het getal) te tonen op de tegel.
-                # We vergelijken ook of de sValue al klopt, om onnodige database writes te voorkomen.
-                if dev_vol.sValue != str(new) or dev_vol.nValue != (2 if new > 0 else 0):
-                    dev_vol.Update(nValue=2 if new > 0 else 0, sValue=str(new))
+            # ---------- Player-specific playlists (één call per speler!) ----------
+            player_pl = None
+            if plsel:
+                player_pl = self.get_player_playlists(mac)
 
+            # ---------- Track Text ----------
             if text in Devices:
                 dev_text = Devices[text]
 
@@ -520,7 +543,7 @@ class LMSPlugin:
                         dev_text.Update(nValue=0, sValue=" ")
                     player_pl = self.get_player_playlists(mac)
                     self.update_player_playlist_selector(plsel, player_pl, active_playlist_name=None)
-                    continue
+                    #continue
 
                 remote = st.get("remote", 0)
                 rm = st.get("remoteMeta", {})
@@ -586,7 +609,7 @@ class LMSPlugin:
                     self.log_player(dev_repeat, f"Repeat {mode_name}") 
                     dev_repeat.Update(nValue=0, sValue=str(level))
 
-            player_pl = self.get_player_playlists(mac)
+            #player_pl = self.get_player_playlists(mac)
             playlist_tracks = st.get("playlist_tracks", 0)
             playlist_name = st.get("playlist_name", "")
             remote = st.get("remote", 0)
@@ -606,6 +629,7 @@ class LMSPlugin:
             self.log(f" Max playlists/player : {self.max_playlists}")
             self.log(f" Poll interval     : {self.pollInterval} sec")
             self.initialized = True
+
 
     # ------------------------------------------------------------------
     # COMMAND HANDLER
