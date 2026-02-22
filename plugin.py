@@ -1,8 +1,8 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.1.1" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.1.2" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
         <h2><br/>Lyrion Music Server Plugin</h2>
-        <p>Version 2.1.1</p>
+        <p>Version 2.1.2</p>
         <p>Detects players, creates devices, and provides:</p>
         <ul>
             <li>Power / Play / Pause / Stop</li>
@@ -59,6 +59,7 @@ class LMSPlugin:
         self.url = ""
         self.auth = None
         self.pollInterval = 30
+        self.offlinePollInterval = 60 # Standaard waarde voor offline
         self.nextPoll = 0
         self.players = []
 
@@ -133,11 +134,14 @@ class LMSPlugin:
             self.error(f"Unable to load icon pack '{_IMAGE}.zip'")
 
         self.pollInterval = int(Parameters.get("Mode1", 30))
+        # Bereken de offline interval: 6x de normale interval (maximaal 5 minuten)
+        self.offlinePollInterval = min(self.pollInterval * 6, 300) 
+        
         self.max_playlists = int(Parameters.get("Mode2", 50))
         self.debug = Parameters.get("Mode3", "False").lower() == "true"
 
         self.displayText = Parameters.get("Mode4", "")
-        self.log(f"Display text = '{self.displayText}'")
+        self.log(f"Poll interval: {self.pollInterval}s (Online) / {self.offlinePollInterval}s (Offline)")
         self.log(f"Starting initialization ......  Please wait ")
 
         self.url = f"http://{Parameters['Address']}:{Parameters['Port']}/jsonrpc.js"
@@ -147,15 +151,33 @@ class LMSPlugin:
         self.auth = (user, pwd) if user else None
 
         Domoticz.Heartbeat(5)
-        self.nextPoll = time.time() + 10
+        self.nextPoll = time.time() + 2
 
     def onStop(self):
         self.log("Plugin stopped.")
 
     def onHeartbeat(self):
         if time.time() >= self.nextPoll:
-            self.nextPoll = time.time() + self.pollInterval
+            # 1. Haal eerst alle nieuwe gegevens op
             self.updateEverything()
+            
+            # 2. Bepaal NU pas de wachttijd voor de VOLGENDE poll
+            current_interval = self.offlinePollInterval
+            
+            if self.server_was_online is True and self.players:
+                any_player_active = False
+                for p in self.players:
+                    # Check of speler aan staat Ã©n speelt
+                    if p.get("power", 0) == 1 and (p.get("isplaying", 0) == 1 or p.get("mode") == "play"):
+                        any_player_active = True
+                        break
+                
+                if any_player_active:
+                    current_interval = self.pollInterval
+
+            # 3. Zet de timer voor de volgende keer
+            self.nextPoll = time.time() + current_interval
+            self.debug_log(f"Next poll will be in {current_interval} seconds.")
 
     # ------------------------------------------------------------------
     # LMS JSON helper
@@ -451,7 +473,6 @@ class LMSPlugin:
     def updateEverything(self):
         server = self.get_serverstatus()
         if not server:
-            # Geen extra log hier – melding komt al uit lms_query_raw
             return
 
         self.players = server.get("players_loop", []) or []
@@ -461,19 +482,14 @@ class LMSPlugin:
         if update_msg:
             if not self.update_notified:
                 import re
-                # HTML opschonen
                 clean_msg = re.sub('<[^<]+?>', '', update_msg)
                 clean_msg = clean_msg.split('Klik op hier')[0].strip()
                 
-                # 1. Stuur een Push Notificatie naar Domoticz
-                # Syntax: Notification(Name, Subject, Text, Subsystem, Priority, Sound)
                 Domoticz.Notification("Lyrion Update", 
                                       "Er is een nieuwe LMS versie beschikbaar", 
                                       clean_msg, 0, 0, "")
                 
-                # 2. Log het ook lokaal
                 Domoticz.Status(f"UPDATE NOTIFICATIE VERSTUURD: {clean_msg}")
-                
                 self.update_notified = True
         else:
             self.update_notified = False        
@@ -517,19 +533,16 @@ class LMSPlugin:
                 dev_vol = Devices[vol]
                 raw = st.get("mixer volume", 0)
                 try:
-                    # Zorg dat we een schone string vergelijken
                     new_sval = str(int(float(str(raw).replace("%", ""))))
                 except:
                     new_sval = "0"
 
-                # Check alleen of de sValue (het getal) verschilt
                 if dev_vol.sValue != new_sval:
                     self.log(f"Volume changed to : {new_sval}%")
-                    # Update nValue naar 2 (On + Getal tonen) of 0 (Off)
                     n_val = 2 if int(new_sval) > 0 else 0
                     dev_vol.Update(nValue=n_val, sValue=new_sval)
 
-            # ---------- Player-specific playlists (één call per speler!) ----------
+            # ---------- Player-specific playlists ----------
             player_pl = None
             if plsel:
                 player_pl = self.get_player_playlists(mac)
@@ -538,39 +551,51 @@ class LMSPlugin:
             if text in Devices:
                 dev_text = Devices[text]
 
-                # Als speler uit of gestopt, Track Text leegmaken
                 if power == 0 or mode in ["stop", "pause"]:
                     if dev_text.sValue != "":
                         dev_text.Update(nValue=0, sValue="")
-                    player_pl = self.get_player_playlists(mac)
-                    self.update_player_playlist_selector(plsel, player_pl, active_playlist_name=None)
+                    if plsel:
+                        self.update_player_playlist_selector(plsel, player_pl, active_playlist_name=None)
                 else:
-                    # Alleen bij aan: Track Text bijwerken
                     remote = st.get("remote", 0)
                     rm = st.get("remoteMeta", {})
-                    pl_loop = st.get("playlist_loop", [])
-
+                    pl_loop = st.get("playlist_loop", []) or []
+                    
+                    current_title = st.get("current_title", "")
                     title = ""
                     artist = ""
+                    station = ""
 
-                    if remote and rm:
-                        title = rm.get("title", "") or title
-                        artist = rm.get("artist", "") or artist
-
-                    if not title and isinstance(pl_loop, list) and pl_loop:
-                        title = pl_loop[0].get("title", "") or title
-                        artist = pl_loop[0].get("artist", "") or artist
-
-                    if not title:
-                        title = st.get("current_title", "")
-
-                    if not title:
-                        label = " "
-                    elif artist:
-                        label = f"&#127908; {artist}<br>&#127925; {title}"
+                    if remote == 1:
+                        # Radio modus
+                        station = current_title        # Regel 1
+                        title = rm.get("title", "")    # Regel 3
+                        artist = rm.get("artist", "")  # Regel 2
                     else:
-                        label = title
+                        # Playlist modus
+                        if pl_loop and isinstance(pl_loop, list):
+                            title = pl_loop[0].get("title", "")
+                            artist = pl_loop[0].get("artist", "")
+                        
+                        if not title:
+                            title = current_title
 
+                    # Regels opbouwen in de gewenste volgorde
+                    lines = []
+                    
+                    # 1. Zendernaam (Station)
+                    if station:
+                        lines.append(f"&#128251; <b>{station}</b>")
+                    
+                    # 2. Artiest (Artist)
+                    if artist:
+                        lines.append(f"&#127908; {artist}")
+                    
+                    # 3. Nummer (Title) - Alleen als anders dan station
+                    if title and title != station:
+                        lines.append(f"&#127925; {title}")
+
+                    label = "<br>".join(lines) if lines else " "
                     label = label[:255]
 
                     track_index = st.get("playlist_cur_index")
@@ -585,36 +610,30 @@ class LMSPlugin:
                     if dev_text.sValue != label or changed:
                         dev_text.Update(nValue=0, sValue=label)
 
+            # ---------- Shuffle & Repeat ----------
             if shuffle in Devices:
                 dev_shuffle = Devices[shuffle]
                 try:
                     shuffle_state = int(st.get("playlist shuffle", 0))
-                except Exception:
+                except:
                     shuffle_state = 0
                 level = shuffle_state * 10
                 if dev_shuffle.sValue != str(level):
-                    mode_name = {0: "Off", 1: "Songs", 2: "Albums"}.get(shuffle_state, shuffle_state)
-                    self.log_player(dev_shuffle, f"Shuffle {mode_name}")
                     dev_shuffle.Update(nValue=0, sValue=str(level))
 
             if repeat in Devices:
                 dev_repeat = Devices[repeat]
                 try:
                     repeat_state = int(st.get("playlist repeat", 0))
-                except Exception:
+                except:
                     repeat_state = 0
                 level = repeat_state * 10
                 if dev_repeat.sValue != str(level):
-                    mode_name = {0: "Off", 1: "Track", 2: "Playlist"}.get(repeat_state, repeat_state)
-                    # VERANDER 'dev' IN 'dev_repeat' HIERONDER:
-                    self.log_player(dev_repeat, f"Repeat {mode_name}") 
                     dev_repeat.Update(nValue=0, sValue=str(level))
 
-            #player_pl = self.get_player_playlists(mac)
+            # ---------- Playlist Selector update ----------
             playlist_tracks = st.get("playlist_tracks", 0)
             playlist_name = st.get("playlist_name", "")
-            remote = st.get("remote", 0)
-
             playlist_is_active = (playlist_tracks > 1 and playlist_name not in ("", None) and remote == 0)
 
             if playlist_is_active:
@@ -638,7 +657,11 @@ class LMSPlugin:
     def onCommand(self, Unit, Command, Level, Hue):
         if Unit not in Devices:
             return
-
+        # We zetten de timer direct op 1 seconde zodra er EEN commando binnenkomt.
+        # Zo wordt de 60s/120s poll altijd direct afgebroken.
+        self.nextPoll = time.time() + 1
+        # -----------------------
+        
         dev = Devices[Unit]
         devname = dev.Name
         mac = dev.Description
@@ -687,13 +710,6 @@ class LMSPlugin:
             mode_name = {0: "Off", 1: "Track", 2: "Playlist"}.get(mode, f"Unknown ({mode})")
             # Correctie: dev gebruiken in plaats van dev_repeat
             self.log_player(dev, f"Repeat {mode_name}")
-            return
-
-            self.send_playercmd(mac, ["playlist", "repeat", str(mode)])
-            nval = 1 if mode > 0 else 0
-            dev.Update(nValue=nval, sValue=str(Level))
-            mode_name = {0: "Off", 1: "Track", 2: "Playlist"}.get(mode, f"Unknown ({mode})")
-            self.log_player(dev_repeat, f"Repeat {mode_name}")
             return
 
         if Command in ["On", "Off"] and self.is_main_device_name(devname):
