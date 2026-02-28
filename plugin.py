@@ -1,8 +1,8 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.1.4" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.1.5" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
         <h2><br/>Lyrion Music Server Plugin</h2>
-        <p>Version 2.1.4</p>
+        <p>Version 2.1.5</p>
         <p>Detects players, creates devices, and provides:</p>
         <ul>
             <li>Power / Play / Pause / Stop</li>
@@ -26,7 +26,7 @@
         </param>
         <param field="Password" label="Password" width="150px" password="true">
         </param>
-        <param field="Mode1" label="Polling interval (sec)" width="100px" default="10">
+        <param field="Mode1" label="Polling interval (On)" width="100px" default="10">
             <description>
                 <br/>
             </description>
@@ -38,8 +38,9 @@
                 <option label="60 sec" value="60"/>
             </options>
         </param>
-        <param field="Mode5" label="Offline polling interval (sec)" width="100px" default="60">
+        <param field="Mode5" label="Polling interval (Off)" width="100px" default="60">
             <options>
+            <option label="10 sec" value="10"/>
             <option label="300 sec" value="300"/>
             <option label="600 sec" value="600" default="60"/>
             <option label="1800 sec" value="1800"/>
@@ -554,22 +555,21 @@ class LMSPlugin:
 
         # LMS update melding
         update_msg = server.get("newversion", "")
+        clean_msg = ""
         if update_msg:
+            import re
+            clean_msg = re.sub('<[^<]+?>', '', update_msg)
+            clean_msg = clean_msg.split('Klik op hier')[0].strip()
             if not self.update_notified:
-                import re
-                clean_msg = re.sub('<[^<]+?>', '', update_msg)
-                clean_msg = clean_msg.split('Klik op hier')[0].strip()
-
                 try:
                     Domoticz.Status(f"{clean_msg}")
                 except Exception as e:
                     Domoticz.Error(f"Kon update notificatie niet versturen: {e}")
-
                 self.update_notified = True
         else:
             self.update_notified = False
 
-        # Nieuwe spelers → devices aanmaken
+        # Nieuwe spelers â†’ devices aanmaken
         for p in self.players:
             name = p.get("name", "Unknown")
             mac = p.get("playerid", "")
@@ -635,10 +635,18 @@ class LMSPlugin:
                 dev_text = Devices[text]
 
                 if power == 0 or mode in ["stop", "pause"]:
-                    if dev_text.sValue != "":
-                        dev_text.Update(nValue=0, sValue="")
+                    # ALS er een update beschikbaar is, laat deze zien
+                    if clean_msg:
+                        label = f"ðŸ”” LMS update beschikbaar"
+                    else:
+                        label = ""  # gewoon leeg als geen update
+
+                    if dev_text.sValue != label:
+                        dev_text.Update(nValue=0, sValue=label)
+
                     if plsel:
                         self.update_player_playlist_selector(plsel, player_pl, active_playlist_name=None)
+
                 else:
                     rm = st.get("remoteMeta", {})
                     pl_loop = st.get("playlist_loop", []) or []
