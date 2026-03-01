@@ -34,33 +34,28 @@
             <options>
                 <option label="20 sec" value="20"/>
                 <option label="5 sec" value="5"/>
-                <option label="10 sec" value="10" default="10"/>
+                <option label="10 sec" value="10" default="true"/>
                 <option label="30 sec" value="30"/>
                 <option label="60 sec" value="60"/>
             </options>
         </param>
-        <param field="Mode5" label="Polling interval (Off)" width="100px" default="60">
+        <param field="Mode5" label="Polling interval (Off)" width="100px" default="600">
             <options>
             <option label="10 sec" value="10"/>
             <option label="300 sec" value="300"/>
-            <option label="600 sec" value="600" default="60"/>
+            <option label="600 sec" value="600" default="true"/>
             <option label="1800 sec" value="1800"/>
             <option label="3600 sec" value="3600"/>
         </options>
         </param>
-        <param field="Mode6" label="Polling interval (lists)" width="150px" default="600">
-            <description>
-            <br/>Time interval for collecting playlists/favorites
-            </description>
+        <param field="Mode6" label="Polling interval (lists)" width="100px" default="600">
             <options>
-                <option label="10 sec" value="10"/>
-                <option label="30 sec" value="30"/>
-                <option label="60 sec" value="60"/>
-                <option label="300 sec" value="300"/>
-                <option label="600 sec" value="600" default="600"/>
-                <option label="1800 sec" value="1800"/>
-                <option label="3600 sec" value="3600"/>
-            </options>
+            <option label="10 sec" value="10"/>
+            <option label="300 sec" value="300"/>
+            <option label="600 sec" value="600" default="true"/>
+            <option label="1800 sec" value="1800"/>
+            <option label="3600 sec" value="3600"/>
+        </options>
         </param>
         <param field="Mode2" label="Max playlists to load" width="100px" default="5"/>
         <param field="Mode3" label="Debug logging" width="100px" default="No">
@@ -145,6 +140,7 @@ class LMSPlugin:
         return not any(x in name for x in ("Volume", "Track", "Actions", "Shuffle", "Repeat", "Playlists", "Favorites"))
 
     def get_free_unit(self):
+        used = set(Devices.keys())
         used = set(Devices.keys())
         for u in range(1, 256):
             if u not in used:
@@ -654,6 +650,7 @@ class LMSPlugin:
 
         if dev_fav.Options.get("LevelNames", "") != levelnames:
             dev_fav.Update(nValue=0, sValue="0", Options=opts)
+            self.log(f"Favorites selector updated for '{dev_fav.Name}'.")
 
     # ------------------------------------------------------------------
     # MAIN UPDATE LOOP
