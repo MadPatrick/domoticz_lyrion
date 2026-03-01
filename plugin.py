@@ -116,7 +116,6 @@ class LMSPlugin:
         # cache per speler
         self.playlist_cache = {}
         self.favorites_cache = {} 
-        self.cache_ttl = 600  # seconden
 
         # Flag of er een actieve speler is (play/pause)
         self.any_active = False
@@ -182,14 +181,14 @@ class LMSPlugin:
         mode5_raw = Parameters.get("Mode5", "")
         if not mode5_raw:
             default_offline = 60
-            self.log(f"Mode5 leeg, automatisch instellen op {default_offline}s")
+            self.log(f"Mode5 is empty, set to {default_offline}s")
             Parameters["Mode5"] = str(default_offline)
             self.offlinePollInterval = default_offline
         else:
             try:
                 self.offlinePollInterval = int(mode5_raw)
             except (TypeError, ValueError):
-                self.log("Mode5 ongeldig, fallback naar 60s")
+                self.log("Mode5 invalid, fallback to 60s")
                 self.offlinePollInterval = 60
 
         # Max playlists (Mode2)
@@ -221,7 +220,7 @@ class LMSPlugin:
             self.cache_ttl = int(Parameters.get("Mode6", 600))
         except (TypeError, ValueError):
             self.cache_ttl = 600
-            self.log("Mode6 ongeldig, fallback naar 600 seconden")
+            self.log("Mode6 Invalid, fallback to 600 sec")
 
     def onStop(self):
         self.log("Plugin stopped.")
@@ -399,7 +398,7 @@ class LMSPlugin:
                 Used=1,
             ).Create()
             main = main_unit
-            self.log(f"Main device aangemaakt voor {name}")
+            self.log(f"Main device created for {name}")
     
         # Volume
         if vol is None:
@@ -412,7 +411,7 @@ class LMSPlugin:
                 Used=1,
             ).Create()
             vol = next_unit
-            self.log(f"Volume device aangemaakt voor {name}")
+            self.log(f"Volume device created for {name}")
             next_unit += 1
 
         # Track
@@ -426,7 +425,7 @@ class LMSPlugin:
                 Used=1,
             ).Create()
             text = next_unit
-            self.log(f"Track device aangemaakt voor {name}")
+            self.log(f"Track device created for {name}")
             next_unit += 1
 
         # Actions
@@ -447,7 +446,7 @@ class LMSPlugin:
                 Used=1,
             ).Create()
             actions = next_unit
-            self.log(f"Actions device aangemaakt voor {name}")
+            self.log(f"Actions device created for {name}")
             next_unit += 1
 
         # Shuffle
@@ -464,7 +463,7 @@ class LMSPlugin:
                 Used=1,
             ).Create()
             shuffle = next_unit
-            self.log(f"Shuffle device aangemaakt voor {name}")
+            self.log(f"Shuffle device created for {name}")
             next_unit += 1
 
         # Repeat
@@ -481,7 +480,7 @@ class LMSPlugin:
                 Used=1,
             ).Create()
             repeat = next_unit
-            self.log(f"Repeat device aangemaakt voor {name}")
+            self.log(f"Repeat device created for {name}")
             next_unit += 1
 
         # Playlists
@@ -498,7 +497,7 @@ class LMSPlugin:
                 Used=1,
             ).Create()
             plsel = next_unit
-            self.log(f"Playlists device aangemaakt voor {name}")
+            self.log(f"Playlists device created for {name}")
             next_unit += 1
 
         # Favorites
@@ -515,7 +514,7 @@ class LMSPlugin:
                 Used=1,
             ).Create()
             favsel = next_unit
-            self.log(f"Favorites device aangemaakt voor {name}")
+            self.log(f"Favorites device created for {name}")
             next_unit += 1
 
         return (main, vol, text, actions, shuffle, repeat, plsel, favsel)
