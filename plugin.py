@@ -1,8 +1,8 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.1.5" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.1.6" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
         <h2><br/>Lyrion Music Server Plugin</h2>
-        <p>Version 2.1.5</p>
+        <p>Version 2.1.6</p>
         <p>Detects players, creates devices, and provides:</p>
         <ul>
             <li>Power / Play / Pause / Stop</li>
@@ -10,6 +10,7 @@
             <li>Track info (Text)</li>
             <li>Playlists (Selector) - per player (player-specific list)</li>
             <li>Sync / Unsync</li>
+            <li>Favorites (Selector)</li>
             <li>Display text (via Actions device)</li>
             <li>Shuffle (Selector)</li>
             <li>Repeat (Selector)</li>
@@ -101,7 +102,10 @@ class LMSPlugin:
 
         # Playlist cache per speler
         self.playlist_cache = {}
-        self.playlist_cache_ttl = 60  # seconden
+        self.playlist_cache_ttl = 600  # seconden
+        # favorites cache per speler        
+        self.favorites_cache = {} 
+        self.favorites_cache_ttl = 600 # seconden, kies zelf
 
         # Flag of er een actieve speler is (play/pause)
         self.any_active = False
@@ -128,7 +132,7 @@ class LMSPlugin:
 
     @staticmethod
     def is_main_device_name(name: str) -> bool:
-        return not any(x in name for x in ("Volume", "Track", "Actions", "Shuffle", "Repeat", "Playlists"))
+        return not any(x in name for x in ("Volume", "Track", "Actions", "Shuffle", "Repeat", "Playlists", "Favorites"))
 
     def get_free_unit(self):
         used = set(Devices.keys())
@@ -304,6 +308,13 @@ class LMSPlugin:
             "LevelActions": "||||",
             "SelectorStyle": "0",
         }
+        
+        # Favorites selector
+        opts_fav = {
+            "LevelNames": "Select|Loading...",
+            "LevelActions": "",
+            "SelectorStyle": "1", # 1 is pulldown (dropdown)
+        }
 
         Domoticz.Device(
             Name=f"{base} Control",
@@ -407,13 +418,24 @@ class LMSPlugin:
             Description=mac,
             Used=1,
         ).Create()
+        
+        Domoticz.Device(
+            Name=f"{base} Favorites",
+            Unit=unit + 7,
+            TypeName="Selector Switch",
+            Switchtype=18,
+            Options=opts_fav,
+            Image=self.imageID,
+            Description=mac,
+            Used=1,
+        ).Create()
 
-        self.createdDevices += 7
+        self.createdDevices += 8
         self.log(f"Devices created for player '{name}'")
-        return (unit, unit + 1, unit + 2, unit + 3, unit + 4, unit + 5, unit + 6)
+        return (unit, unit + 1, unit + 2, unit + 3, unit + 4, unit + 5, unit + 6, unit + 7)
 
     def find_player_devices(self, mac):
-        main = vol = text = actions = shuffle = repeat = playlistsel = None
+        main = vol = text = actions = shuffle = repeat = playlistsel = favorites = None
 
         # Eerst op Description (ideaal)
         for uid, dev in Devices.items():
@@ -432,6 +454,8 @@ class LMSPlugin:
                 repeat = uid
             elif dev.Name.endswith("Playlists"):
                 playlistsel = uid
+            elif dev.Name.endswith("Favorites"):
+                favorites = uid
             else:
                 main = uid
 
@@ -452,12 +476,169 @@ class LMSPlugin:
                     repeat = uid
                 elif dev.Name.endswith("Playlists"):
                     playlistsel = uid
+                elif dev.Name.endswith("Favorites"):
+                    favorites = uid
                 else:
                     main = uid
 
         if main:
-            return (main, vol, text, actions, shuffle, repeat, playlistsel)
+            return (main, vol, text, actions, shuffle, repeat, playlistsel, favorites)
         return None
+
+    def ensure_player_devices(self, name, mac):
+        """Check welke devices er bestaan en maak ontbrekende aan"""
+        devices = self.find_player_devices(mac)
+    
+        # Als geen enkel device bestaat, maak alles aan
+        if not devices:
+            return self.create_player_devices(name, mac)
+    
+        main, vol, text, actions, shuffle, repeat, plsel, favsel = devices
+    
+        # Track welke units al bestaan
+        units_in_use = set(u for u in devices if u is not None)
+        next_unit = self.get_free_unit()
+    
+        # Als main ontbreekt
+        if main is None:
+            main_unit = next_unit
+            next_unit += 1
+            opts_main = {
+                "LevelNames": "Off|Pause|Play|Stop",
+                "LevelActions": "||||",
+                "SelectorStyle": "0",
+            }
+            Domoticz.Device(
+                Name=f"{name} Control",
+                Unit=main_unit,
+                TypeName="Selector Switch",
+                Switchtype=18,
+                Options=opts_main,
+                Image=self.imageID,
+                Description=mac,
+                Used=1,
+            ).Create()
+            main = main_unit
+            self.log(f"Main device aangemaakt voor {name}")
+    
+        # Volume
+        if vol is None:
+            Domoticz.Device(
+                Name=f"{name} Volume",
+                Unit=next_unit,
+                TypeName="Dimmer",
+                Image=self.imageID,
+                Description=mac,
+                Used=1,
+            ).Create()
+            vol = next_unit
+            self.log(f"Volume device aangemaakt voor {name}")
+            next_unit += 1
+
+        # Track
+        if text is None:
+            Domoticz.Device(
+                Name=f"{name} Track",
+                Unit=next_unit,
+                TypeName="Text",
+                Image=self.imageID,
+                Description=mac,
+                Used=1,
+            ).Create()
+            text = next_unit
+            self.log(f"Track device aangemaakt voor {name}")
+            next_unit += 1
+
+        # Actions
+        if actions is None:
+            opts_act = {
+                "LevelNames": "None|SendText|Sync to this|Unsync",
+                "LevelActions": "||",
+                "SelectorStyle": "0",
+            }
+            Domoticz.Device(
+                Name=f"{name} Actions",
+                Unit=next_unit,
+                TypeName="Selector Switch",
+                Switchtype=18,
+                Options=opts_act,
+                Image=self.imageID,
+                Description=mac,
+                Used=1,
+            ).Create()
+            actions = next_unit
+            self.log(f"Actions device aangemaakt voor {name}")
+            next_unit += 1
+
+        # Shuffle
+        if shuffle is None:
+            opts_shuffle = {"LevelNames": "Off|Songs|Albums", "LevelActions": "||", "SelectorStyle": "0"}
+            Domoticz.Device(
+                Name=f"{name} Shuffle",
+                Unit=next_unit,
+                TypeName="Selector Switch",
+                Switchtype=18,
+                Options=opts_shuffle,
+                Image=self.imageID,
+                Description=mac,
+                Used=1,
+            ).Create()
+            shuffle = next_unit
+            self.log(f"Shuffle device aangemaakt voor {name}")
+            next_unit += 1
+
+        # Repeat
+        if repeat is None:
+            opts_repeat = {"LevelNames": "Off|Track|Playlist", "LevelActions": "||", "SelectorStyle": "0"}
+            Domoticz.Device(
+                Name=f"{name} Repeat",
+                Unit=next_unit,
+                TypeName="Selector Switch",
+                Switchtype=18,
+                Options=opts_repeat,
+                Image=self.imageID,
+                Description=mac,
+                Used=1,
+            ).Create()
+            repeat = next_unit
+            self.log(f"Repeat device aangemaakt voor {name}")
+            next_unit += 1
+
+        # Playlists
+        if plsel is None:
+            opts_pl = {"LevelNames": "Select|Loading...", "LevelActions": "", "SelectorStyle": "1"}
+            Domoticz.Device(
+                Name=f"{name} Playlists",
+                Unit=next_unit,
+                TypeName="Selector Switch",
+                Switchtype=18,
+                Options=opts_pl,
+                Image=self.imageID,
+                Description=mac,
+                Used=1,
+            ).Create()
+            plsel = next_unit
+            self.log(f"Playlists device aangemaakt voor {name}")
+            next_unit += 1
+
+        # Favorites
+        if favsel is None:
+            opts_fav = {"LevelNames": "Select|Loading...", "LevelActions": "", "SelectorStyle": "1"}
+            Domoticz.Device(
+                Name=f"{name} Favorites",
+                Unit=next_unit,
+                TypeName="Selector Switch",
+                Switchtype=18,
+                Options=opts_fav,
+                Image=self.imageID,
+                Description=mac,
+                Used=1,
+            ).Create()
+            favsel = next_unit
+            self.log(f"Favorites device aangemaakt voor {name}")
+            next_unit += 1
+
+        return (main, vol, text, actions, shuffle, repeat, plsel, favsel)
 
     # ------------------------------------------------------------------
     # PLAYER-SPECIFIC PLAYLISTS
@@ -485,6 +666,18 @@ class LMSPlugin:
         playlists = self.get_player_playlists(mac)
         self.playlist_cache[mac] = {"ts": now, "data": playlists}
         return playlists
+        
+    def get_cached_favorites(self, mac):
+        now = time.time()
+        entry = self.favorites_cache.get(mac)
+
+        if entry and now - entry["ts"] < self.favorites_cache_ttl:
+            return entry["data"]
+
+        favorites = self.get_cached_favorites(mac)
+        self.favorites_cache[mac] = {"ts": now, "data": favorites}
+        return favorites
+
 
     def update_player_playlist_selector(self, plsel_unit, playlists, active_playlist_name=None):
         if plsel_unit not in Devices:
@@ -541,6 +734,46 @@ class LMSPlugin:
         self.send_playercmd(mac, ["playlistcontrol", "cmd:load", f"playlist_id:{playlist_id}"])
         self.log(f"Loaded playlist '{playlist_name}' (ID {playlist_id}) on player {mac}")
         self.nextPoll = time.time() + 1
+        
+    # ------------------------------------------------------------------
+    # FAVORITES
+    # ------------------------------------------------------------------
+    def get_player_favorites(self, mac):
+        result = self.lms_query_raw("", ["favorites", "items", 0, 50])
+        if not result:
+            return []
+
+        fav_loop = result.get("loop_loop", []) or []
+        favorites = []
+
+        for f in fav_loop:
+            name = f.get("name", "")
+            fid = f.get("id")
+            if name and f.get("hasitems") == 0:
+                favorites.append({"id": fid, "playlist": name})
+
+        return favorites
+
+
+    def update_favorites_selector(self, fav_unit, favorites):
+        if fav_unit not in Devices:
+            return
+
+        dev_fav = Devices[fav_unit]
+
+        if not favorites:
+            levelnames = "Select|No Favorites"
+        else:
+            levelnames = "Select|" + "|".join(f["playlist"] for f in favorites)
+
+        opts = {
+            "LevelNames": levelnames,
+            "LevelActions": "",
+            "SelectorStyle": "1",
+        }
+
+        if dev_fav.Options.get("LevelNames", "") != levelnames:
+            dev_fav.Update(nValue=0, sValue="0", Options=opts)
 
     # ------------------------------------------------------------------
     # MAIN UPDATE LOOP
@@ -569,12 +802,12 @@ class LMSPlugin:
         else:
             self.update_notified = False
 
-        # Nieuwe spelers â†’ devices aanmaken
+        # Nieuwe spelers → devices aanmaken
         for p in self.players:
             name = p.get("name", "Unknown")
             mac = p.get("playerid", "")
-            if mac and not self.find_player_devices(mac):
-                self.create_player_devices(name, mac)
+            if mac:
+                self.ensure_player_devices(name, mac)
 
         any_active = False
 
@@ -588,7 +821,7 @@ class LMSPlugin:
             if not devices:
                 continue
 
-            main, vol, text, actions, shuffle, repeat, plsel = devices
+            main, vol, text, actions, shuffle, repeat, plsel, favsel = devices
             st = self.get_status(mac) or {}
 
             power = int(st.get("power", 0))
@@ -637,7 +870,7 @@ class LMSPlugin:
                 if power == 0 or mode in ["stop", "pause"]:
                     # ALS er een update beschikbaar is, laat deze zien
                     if clean_msg:
-                        label = f"ðŸ”” LMS update beschikbaar"
+                        label = f"🔔 LMS update beschikbaar"
                     else:
                         label = ""  # gewoon leeg als geen update
 
@@ -669,11 +902,11 @@ class LMSPlugin:
 
                     lines = []
                     if station:
-                        lines.append(f"&#128251; <b>{station}</b>")
+                        lines.append(f"&#128251; <b><span style='color:white;'>{station}</span></b>")
                     if artist:
-                        lines.append(f"&#127908; {artist}")
+                        lines.append(f"&#127908; <span style='color:#fcfc7e;'>{artist}</span>")  # lichtgeel
                     if title and title != station:
-                        lines.append(f"&#127925; {title}")
+                        lines.append(f"&#127925; <span style='color:orange !important;'>{title}</span>")
 
                     label = "<br>".join(lines) if lines else " "
                     label = label[:255]
@@ -722,6 +955,9 @@ class LMSPlugin:
                     self.update_player_playlist_selector(plsel, player_pl, active_playlist_name=playlist_name)
                 else:
                     self.update_player_playlist_selector(plsel, player_pl, active_playlist_name=None)
+            if favsel:
+                favorites = self.get_player_favorites(mac)
+                self.update_favorites_selector(favsel, favorites)
 
         self.any_active = any_active
 
@@ -748,6 +984,23 @@ class LMSPlugin:
         mac = dev.Description
 
         self.debug_log(f"onCommand: Unit={Unit}, Name={devname}, Command={Command}, Level={Level}, mac={mac}")
+        
+        if "Favorites" in devname and Command == "Set Level":
+            if Level == 0:
+                dev.Update(nValue=0, sValue="0")
+                return
+            
+            # Haal de lijst op (je kunt hier ook caching toevoegen net als bij playlists)
+            favorites = self.get_player_favorites(mac)
+            idx = int(Level // 10) - 1
+            if 0 <= idx < len(favorites):
+                fav_id = favorites[idx]["id"]
+                # Commando om de favoriet af te spelen
+                self.send_playercmd(mac, ["favorites", "playlist", "play", f"item_id:{fav_id}"])
+                self.log(f"Playing Favorite: {favorites[idx]['playlist']}")
+            
+            self.nextPoll = time.time() + 1
+            return
 
         if "Playlists" in devname and Command == "Set Level":
             if Level == 0:
