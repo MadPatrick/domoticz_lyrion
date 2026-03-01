@@ -66,7 +66,6 @@ import requests
 import time
 import re
 
-
 class LMSPlugin:
     def __init__(self):
         self.url = ""
@@ -100,12 +99,10 @@ class LMSPlugin:
         self.offline_grace = 15
         self.update_notified = False
 
-        # Playlist cache per speler
+        # cache per speler
         self.playlist_cache = {}
-        self.playlist_cache_ttl = 600  # seconden
-        # favorites cache per speler        
         self.favorites_cache = {} 
-        self.favorites_cache_ttl = 600 # seconden, kies zelf
+        self.cache_ttl = 600  # seconden
 
         # Flag of er een actieve speler is (play/pause)
         self.any_active = False
@@ -292,147 +289,6 @@ class LMSPlugin:
         self.send_playercmd(playerid, cmd)
         self.log(f"Display text sent to {playerid}: '{line1}' / '{line2}' ({d}s)")
 
-    # ------------------------------------------------------------------
-    # DEVICE CREATION / LOOKUP
-    # ------------------------------------------------------------------
-    def create_player_devices(self, name, mac):
-        base = name
-        unit = self.get_free_unit()
-        if unit is None:
-            self.error("Geen vrije Unit ID beschikbaar!")
-            return None
-
-        # main selector
-        opts_main = {
-            "LevelNames": "Off|Pause|Play|Stop",
-            "LevelActions": "||||",
-            "SelectorStyle": "0",
-        }
-        
-        # Favorites selector
-        opts_fav = {
-            "LevelNames": "Select|Loading...",
-            "LevelActions": "",
-            "SelectorStyle": "1", # 1 is pulldown (dropdown)
-        }
-
-        Domoticz.Device(
-            Name=f"{base} Control",
-            Unit=unit,
-            TypeName="Selector Switch",
-            Switchtype=18,
-            Options=opts_main,
-            Image=self.imageID,
-            Description=mac,
-            Used=1,
-        ).Create()
-
-        # volume
-        Domoticz.Device(
-            Name=f"{base} Volume",
-            Unit=unit + 1,
-            TypeName="Dimmer",
-            Image=self.imageID,
-            Description=mac,
-            Used=1,
-        ).Create()
-
-        # track text
-        Domoticz.Device(
-            Name=f"{base} Track",
-            Unit=unit + 2,
-            TypeName="Text",
-            Image=self.imageID,
-            Description=mac,
-            Used=1,
-        ).Create()
-
-        # actions selector
-        opts_act = {
-            "LevelNames": "None|SendText|Sync to this|Unsync",
-            "LevelActions": "||",
-            "SelectorStyle": "0",
-        }
-
-        Domoticz.Device(
-            Name=f"{base} Actions",
-            Unit=unit + 3,
-            TypeName="Selector Switch",
-            Switchtype=18,
-            Options=opts_act,
-            Image=self.imageID,
-            Description=mac,
-            Used=1,
-        ).Create()
-
-        # shuffle selector
-        opts_shuffle = {
-            "LevelNames": "Off|Songs|Albums",
-            "LevelActions": "||",
-            "SelectorStyle": "0",
-        }
-
-        Domoticz.Device(
-            Name=f"{base} Shuffle",
-            Unit=unit + 4,
-            TypeName="Selector Switch",
-            Switchtype=18,
-            Options=opts_shuffle,
-            Image=self.imageID,
-            Description=mac,
-            Used=1,
-        ).Create()
-
-        # repeat selector
-        opts_repeat = {
-            "LevelNames": "Off|Track|Playlist",
-            "LevelActions": "||",
-            "SelectorStyle": "0",
-        }
-
-        Domoticz.Device(
-            Name=f"{base} Repeat",
-            Unit=unit + 5,
-            TypeName="Selector Switch",
-            Switchtype=18,
-            Options=opts_repeat,
-            Image=self.imageID,
-            Description=mac,
-            Used=1,
-        ).Create()
-
-        # playlists selector
-        opts_pl = {
-            "LevelNames": "Select|Loading...",
-            "LevelActions": "",
-            "SelectorStyle": "1",
-        }
-
-        Domoticz.Device(
-            Name=f"{base} Playlists",
-            Unit=unit + 6,
-            TypeName="Selector Switch",
-            Switchtype=18,
-            Options=opts_pl,
-            Image=self.imageID,
-            Description=mac,
-            Used=1,
-        ).Create()
-        
-        Domoticz.Device(
-            Name=f"{base} Favorites",
-            Unit=unit + 7,
-            TypeName="Selector Switch",
-            Switchtype=18,
-            Options=opts_fav,
-            Image=self.imageID,
-            Description=mac,
-            Used=1,
-        ).Create()
-
-        self.createdDevices += 8
-        self.log(f"Devices created for player '{name}'")
-        return (unit, unit + 1, unit + 2, unit + 3, unit + 4, unit + 5, unit + 6, unit + 7)
 
     def find_player_devices(self, mac):
         main = vol = text = actions = shuffle = repeat = playlistsel = favorites = None
@@ -488,11 +344,14 @@ class LMSPlugin:
     def ensure_player_devices(self, name, mac):
         """Check welke devices er bestaan en maak ontbrekende aan"""
         devices = self.find_player_devices(mac)
-    
-        # Als geen enkel device bestaat, maak alles aan
+
+        # Als geen enkel device bestaat, gaan we verder in deze functie 
+        # om ze een voor een aan te maken.
         if not devices:
-            return self.create_player_devices(name, mac)
-    
+            # We zetten 'devices' op een lijst met None waarden zodat de rest
+            # van de functie begrijpt dat alles nog aangemaakt moet worden.
+            devices = (None, None, None, None, None, None, None, None)
+
         main, vol, text, actions, shuffle, repeat, plsel, favsel = devices
     
         # Track welke units al bestaan
@@ -660,7 +519,7 @@ class LMSPlugin:
     def get_cached_playlists(self, mac):
         now = time.time()
         entry = self.playlist_cache.get(mac)
-        if entry and now - entry["ts"] < self.playlist_cache_ttl:
+        if entry and now - entry["ts"] < self.cache_ttl:
             return entry["data"]
 
         playlists = self.get_player_playlists(mac)
@@ -671,10 +530,11 @@ class LMSPlugin:
         now = time.time()
         entry = self.favorites_cache.get(mac)
 
-        if entry and now - entry["ts"] < self.favorites_cache_ttl:
+        # Als de cache nog geldig is, geef de data terug
+        if entry and now - entry["ts"] < self.cache_ttl:
             return entry["data"]
 
-        favorites = self.get_cached_favorites(mac)
+        favorites = self.get_player_favorites(mac)
         self.favorites_cache[mac] = {"ts": now, "data": favorites}
         return favorites
 
@@ -956,7 +816,7 @@ class LMSPlugin:
                 else:
                     self.update_player_playlist_selector(plsel, player_pl, active_playlist_name=None)
             if favsel:
-                favorites = self.get_player_favorites(mac)
+                favorites = self.get_cached_favorites(mac)
                 self.update_favorites_selector(favsel, favorites)
 
         self.any_active = any_active
@@ -989,13 +849,12 @@ class LMSPlugin:
             if Level == 0:
                 dev.Update(nValue=0, sValue="0")
                 return
-            
-            # Haal de lijst op (je kunt hier ook caching toevoegen net als bij playlists)
-            favorites = self.get_player_favorites(mac)
+    
+            # Gebruik ook hier de cache voor snelheid
+            favorites = self.get_cached_favorites(mac)
             idx = int(Level // 10) - 1
             if 0 <= idx < len(favorites):
                 fav_id = favorites[idx]["id"]
-                # Commando om de favoriet af te spelen
                 self.send_playercmd(mac, ["favorites", "playlist", "play", f"item_id:{fav_id}"])
                 self.log(f"Playing Favorite: {favorites[idx]['playlist']}")
             
