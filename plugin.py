@@ -48,6 +48,20 @@
             <option label="3600 sec" value="3600"/>
         </options>
         </param>
+        <param field="Mode6" label="Polling interval (lists)" width="150px" default="600">
+            <description>
+            <br/>Time interval for collecting playlists/favorites
+            </description>
+            <options>
+                <option label="10 sec" value="10"/>
+                <option label="30 sec" value="30"/>
+                <option label="60 sec" value="60"/>
+                <option label="300 sec" value="300"/>
+                <option label="600 sec" value="600" default="600"/>
+                <option label="1800 sec" value="1800"/>
+                <option label="3600 sec" value="3600"/>
+            </options>
+        </param>
         <param field="Mode2" label="Max playlists to load" width="100px" default="5"/>
         <param field="Mode3" label="Debug logging" width="100px" default="No">
             <options>
@@ -201,6 +215,13 @@ class LMSPlugin:
 
         Domoticz.Heartbeat(5)
         self.nextPoll = time.time() + 2
+        
+        # Cache TTL (Mode6)
+        try:
+            self.cache_ttl = int(Parameters.get("Mode6", 600))
+        except (TypeError, ValueError):
+            self.cache_ttl = 600
+            self.log("Mode6 ongeldig, fallback naar 600 seconden")
 
     def onStop(self):
         self.log("Plugin stopped.")
