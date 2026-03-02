@@ -613,6 +613,7 @@ class LMSPlugin:
     # FAVORITES
     # ------------------------------------------------------------------
     def get_player_favorites(self, mac):
+        # We halen iets meer items op, maar filteren op bruikbare links
         result = self.lms_query_raw("", ["favorites", "items", 0, 50])
         if not result:
             return []
@@ -623,7 +624,8 @@ class LMSPlugin:
         for f in fav_loop:
             name = f.get("name", "")
             fid = f.get("id")
-            if name and fid:
+            # We negeren items zonder ID of items die als 'header' dienen
+            if name and fid and f.get("hasitems") != 1: 
                 favorites.append({"id": fid, "name": name})
 
         return favorites
@@ -635,9 +637,22 @@ class LMSPlugin:
         dev_fav = Devices[fav_unit]
 
         if not favorites:
-            levelnames = "Select|No Favorites"
+            levelnames = "Select|Geen Favorieten"
         else:
-            levelnames = "Select|" + "|".join(f["name"] for f in favorites)
+            # Domoticz limiet is ~159 tekens voor alle opties samen.
+            # We korten namen af om meer favorieten kwijt te kunnen.
+            short_names = []
+            for f in favorites:
+                name = f["name"]
+                if len(name) > 25:
+                    name = name[:20] + "..."
+                short_names.append(name)
+            
+            levelnames = "Select|" + "|".join(short_names)
+
+        # Harde knip om database-errors bij te lange strings te voorkomen
+        if len(levelnames) > 159:
+            levelnames = levelnames[:156] + "..."
 
         opts = {
             "LevelNames": levelnames,
@@ -645,9 +660,10 @@ class LMSPlugin:
             "SelectorStyle": "1",
         }
 
+        # Alleen updaten als er echt iets veranderd is om geknipper te voorkomen
         if dev_fav.Options.get("LevelNames", "") != levelnames:
-            dev_fav.Update(nValue=0, sValue="0", Options=opts)
-            self.log(f"Favorites selector updated for '{dev_fav.Name}'.")
+            self.debug_log(f"Updating Favorites list. String length: {len(levelnames)}")
+            dev_fav.Update(nValue=0, sValue=dev_fav.sValue, Options=opts)
 
     # ------------------------------------------------------------------
     # MAIN UPDATE LOOP
@@ -775,11 +791,11 @@ class LMSPlugin:
 
                     lines = []
                     if station:
-                        lines.append(f"&#128251; <b><span style='color:white;'>{station}</span></b>")
+                        lines.append(f"&#128251; <b><span style='color:#969696;'>{station}</span></b>")
                     if artist:
-                        lines.append(f"&#127908; <span style='color:#fcfc7e;'>{artist}</span>")  # lichtgeel
+                        lines.append(f"&#127908; <span style='color:#FFD700;'>{artist}</span>")  # lichtgeel
                     if title and title != station:
-                        lines.append(f"&#127925; <span style='color:orange !important;'>{title}</span>")
+                        lines.append(f"&#127925; <span style='color:#FFA500 !important;'>{title}</span>")
 
                     label = "<br>".join(lines) if lines else " "
                     label = label[:255]
@@ -862,15 +878,21 @@ class LMSPlugin:
             if Level == 0:
                 dev.Update(nValue=0, sValue="0")
                 return
-    
-            # Gebruik ook hier de cache voor snelheid
+
             favorites = self.get_cached_favorites(mac)
-            idx = int(Level // 10) - 1
+            # Bepaal exact welke favorite is gekozen
+            svalue = str(Level)
+            idx = (int(svalue) // 10) - 1
+
             if 0 <= idx < len(favorites):
-                fav_id = favorites[idx]["id"]
+                fav = favorites[idx]
+                fav_id = fav["id"]
                 self.send_playercmd(mac, ["favorites", "playlist", "play", f"item_id:{fav_id}"])
-                self.log(f"Playing Favorite: {favorites[idx]['name']}")
-            
+                self.log(f"Playing Favorite: {fav['name']}")
+
+                # Forceer dat de selector op de gekozen favorite blijft
+                dev.Update(nValue=1, sValue=svalue, Options=dev.Options)
+
             self.nextPoll = time.time() + 1
             return
 
