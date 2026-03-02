@@ -184,6 +184,13 @@ class LMSPlugin:
             except (TypeError, ValueError):
                 self.log("Mode5 invalid, fallback to 60s")
                 self.offlinePollInterval = 60
+        
+        # listPollInterval (Mode6)
+        try:
+            self.listPollInterval = int(Parameters.get("Mode6", 600))
+        except (TypeError, ValueError):
+            self.listPollInterval = 600
+            self.log("Mode6 Invalid, fallback to 600 sec")
 
         # Max playlists (Mode2)
         try:
@@ -197,7 +204,11 @@ class LMSPlugin:
         # Display text (Mode4)
         self.displayText = Parameters.get("Mode4", "")
 
-        self.log(f"Poll interval: {self.pollInterval}s (Online) / {self.offlinePollInterval}s (Offline)")
+        self.log(
+            f"Poll interval: Online : {self.pollInterval}s | "
+            f"Offline : {self.offlinePollInterval}s | Lists: {self.listPollInterval}s"
+        )
+
         self.log("Starting initialization ......  Please wait ")
 
         # Server URL + Auth
@@ -209,13 +220,6 @@ class LMSPlugin:
         Domoticz.Heartbeat(5)
         self.nextPoll = time.time() + 2
         
-        # Cache TTL (Mode6)
-        try:
-            self.cache_ttl = int(Parameters.get("Mode6", 600))
-        except (TypeError, ValueError):
-            self.cache_ttl = 600
-            self.log("Mode6 Invalid, fallback to 600 sec")
-
     def onStop(self):
         self.log("Plugin stopped.")
 
@@ -533,7 +537,7 @@ class LMSPlugin:
     def get_cached_playlists(self, mac):
         now = time.time()
         entry = self.playlist_cache.get(mac)
-        if entry and now - entry["ts"] < self.cache_ttl:
+        if entry and now - entry["ts"] < self.listPollInterval:
             return entry["data"]
 
         playlists = self.get_player_playlists(mac)
@@ -545,7 +549,7 @@ class LMSPlugin:
         entry = self.favorites_cache.get(mac)
 
         # Als de cache nog geldig is, geef de data terug
-        if entry and now - entry["ts"] < self.cache_ttl:
+        if entry and now - entry["ts"] < self.listPollInterval:
             return entry["data"]
 
         favorites = self.get_player_favorites(mac)
@@ -759,7 +763,7 @@ class LMSPlugin:
                 if power == 0 or mode in ["stop", "pause"]:
                     # ALS er een update beschikbaar is, laat deze zien
                     if clean_msg:
-                        label = f"ðŸ”” LMS update beschikbaar"
+                        label = f"🔔 LMS update beschikbaar"
                     else:
                         label = ""  # gewoon leeg als geen update
 
