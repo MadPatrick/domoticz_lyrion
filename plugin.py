@@ -97,7 +97,6 @@ class LMSPlugin:
 
         # Logging / init
         self.initialized = False
-        self.createdDevices = 0
 
         # Track-change detection
         self.lastTrackIndex = {}
@@ -140,7 +139,6 @@ class LMSPlugin:
         return not any(x in name for x in ("Volume", "Track", "Actions", "Shuffle", "Repeat", "Playlists", "Favorites"))
 
     def get_free_unit(self):
-        used = set(Devices.keys())
         used = set(Devices.keys())
         for u in range(1, 256):
             if u not in used:
@@ -371,7 +369,7 @@ class LMSPlugin:
         main, vol, text, actions, shuffle, repeat, plsel, favsel = devices
     
         # Track welke units al bestaan
-        units_in_use = set(u for u in devices if u is not None)
+        ###units_in_use = set(u for u in devices if u is not None)
         next_unit = self.get_free_unit()
     
         # Als main ontbreekt
@@ -625,11 +623,10 @@ class LMSPlugin:
         for f in fav_loop:
             name = f.get("name", "")
             fid = f.get("id")
-            if name and f.get("hasitems") == 0:
-                favorites.append({"id": fid, "playlist": name})
+            if name and fid:
+                favorites.append({"id": fid, "name": name})
 
         return favorites
-
 
     def update_favorites_selector(self, fav_unit, favorites):
         if fav_unit not in Devices:
@@ -640,7 +637,7 @@ class LMSPlugin:
         if not favorites:
             levelnames = "Select|No Favorites"
         else:
-            levelnames = "Select|" + "|".join(f["playlist"] for f in favorites)
+            levelnames = "Select|" + "|".join(f["name"] for f in favorites)
 
         opts = {
             "LevelNames": levelnames,
@@ -667,7 +664,6 @@ class LMSPlugin:
         update_msg = server.get("newversion", "")
         clean_msg = ""
         if update_msg:
-            import re
             clean_msg = re.sub('<[^<]+?>', '', update_msg)
             clean_msg = clean_msg.split('Klik op hier')[0].strip()
             if not self.update_notified:
@@ -679,7 +675,7 @@ class LMSPlugin:
         else:
             self.update_notified = False
 
-        # Nieuwe spelers → devices aanmaken
+        # Nieuwe spelers - devices aanmaken
         for p in self.players:
             name = p.get("name", "Unknown")
             mac = p.get("playerid", "")
@@ -747,7 +743,7 @@ class LMSPlugin:
                 if power == 0 or mode in ["stop", "pause"]:
                     # ALS er een update beschikbaar is, laat deze zien
                     if clean_msg:
-                        label = f"🔔 LMS update beschikbaar"
+                        label = f"ðŸ”” LMS update beschikbaar"
                     else:
                         label = ""  # gewoon leeg als geen update
 
@@ -873,7 +869,7 @@ class LMSPlugin:
             if 0 <= idx < len(favorites):
                 fav_id = favorites[idx]["id"]
                 self.send_playercmd(mac, ["favorites", "playlist", "play", f"item_id:{fav_id}"])
-                self.log(f"Playing Favorite: {favorites[idx]['playlist']}")
+                self.log(f"Playing Favorite: {favorites[idx]['name']}")
             
             self.nextPoll = time.time() + 1
             return
