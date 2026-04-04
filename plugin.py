@@ -1,8 +1,8 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.1.7" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.1.8" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
         <h2><br/>Lyrion Music Server Plugin</h2>
-        <p>Version 2.1.7</p>
+        <p>Version 2.1.8</p>
         <p>Detects players, creates devices, and provides:</p>
         <ul>
             <li>Power / Play / Pause / Stop</li>
@@ -32,29 +32,30 @@
                 <br/>
             </description>
             <options>
-                <option label="20 sec" value="20"/>
-                <option label="5 sec" value="5"/>
-                <option label="10 sec" value="10" default="true"/>
+                <option label="10 sec" value="10"/>
+                <option label="20 sec" value="20" default="true"/>
                 <option label="30 sec" value="30"/>
                 <option label="60 sec" value="60"/>
+                <option label="120 sec" value="120"/>
+                <option label="600 sec" value="600"/>
             </options>
         </param>
         <param field="Mode5" label="Polling interval (Off)" width="100px" default="600">
             <options>
-            <option label="10 sec" value="10"/>
-            <option label="300 sec" value="300"/>
-            <option label="600 sec" value="600" default="true"/>
-            <option label="1800 sec" value="1800"/>
-            <option label="3600 sec" value="3600"/>
+            <option label=" 1 min" value="60"/>
+            <option label=" 5 min" value="300"/>
+            <option label="10 min" value="600" default="true"/>
+            <option label="30 min" value="1800"/>
+            <option label="60 min" value="3600"/>
         </options>
         </param>
-        <param field="Mode6" label="Polling interval (lists)" width="100px" default="600">
+        <param field="Mode6" label="Polling interval (lists)" width="100px" default="10">
             <options>
-            <option label="10 sec" value="10"/>
-            <option label="300 sec" value="300"/>
-            <option label="600 sec" value="600" default="true"/>
-            <option label="1800 sec" value="1800"/>
-            <option label="3600 sec" value="3600"/>
+            <option label="1 min" value="1"/>
+            <option label="5 min" value="5"/>
+            <option label="10 min" value="10" default="true"/>
+            <option label="30 min" value="30"/>
+            <option label="60 min" value="60"/>
         </options>
         </param>
         <param field="Mode2" label="Max playlists to load" width="100px" default="5"/>
@@ -107,14 +108,12 @@ class LMSPlugin:
         self.last_success = 0
         self.offline_grace = 15
         self.update_notified = False
-        # FIX 10: bijhouden welke versiemelding al getoond is
         self.last_update_version = ""
 
         # cache per speler
         self.playlist_cache = {}
         self.favorites_cache = {}
 
-        # FIX 9: listPollInterval initialiseren in __init__ als veilige fallback
         self.listPollInterval = 600
 
         # Flag of er een actieve speler is (play/pause)
@@ -127,8 +126,6 @@ class LMSPlugin:
         Domoticz.Log(msg)
 
     def debug_log(self, msg):
-        # FIX 5: gebruik Domoticz.Debug zodat berichten alleen zichtbaar zijn
-        # als Domoticz zelf in debug-mode staat
         if self.debug:
             Domoticz.Debug("DEBUG: " + str(msg))
 
@@ -180,7 +177,6 @@ class LMSPlugin:
             self.pollInterval = 30
 
         # Offline interval (Mode5)
-        # FIX 2: Parameters is read-only in Domoticz, niet naar schrijven
         mode5_raw = Parameters.get("Mode5", "")
         if not mode5_raw:
             self.log("Mode5 is empty, fallback to 60s")
@@ -192,9 +188,9 @@ class LMSPlugin:
                 self.log("Mode5 invalid, fallback to 60s")
                 self.offlinePollInterval = 60
 
-        # List poll interval (Mode6)
+        # List poll interval (Mode6) — waarde is in minuten, intern omzetten naar seconden
         try:
-            self.listPollInterval = int(Parameters.get("Mode6", 600))
+            self.listPollInterval = int(Parameters.get("Mode6", 10)) * 60
         except (TypeError, ValueError):
             self.listPollInterval = 600
             self.log("Mode6 invalid, fallback to 600 sec")
@@ -218,7 +214,7 @@ class LMSPlugin:
 
         self.log(
             f"Poll interval: Online : {self.pollInterval}s | "
-            f"Offline : {self.offlinePollInterval}s | Lists: {self.listPollInterval}s"
+            f"Offline : {self.offlinePollInterval}s | Lists: {self.listPollInterval // 60}min"
         )
         self.log("Starting initialization ...... Please wait")
 
@@ -289,8 +285,6 @@ class LMSPlugin:
                 return result
             time.sleep(0.2)
         return None
-
-    # FIX 3: send_button verwijderd â€” werd nergens gebruikt
 
     # ------------------------------------------------------------------
     # DISPLAY TEXT
@@ -374,8 +368,6 @@ class LMSPlugin:
 
         main, vol, text, actions, shuffle, repeat, plsel, favsel = devices
 
-        # FIX 1: lokale used_units set zodat nieuw aangemaakte devices direct
-        # worden meegeteld en geen dubbele unit-nummers kunnen ontstaan
         used_units = set(Devices.keys())
         for u in devices:
             if u is not None:
@@ -386,7 +378,7 @@ class LMSPlugin:
             used_units.add(u)
             return u
 
-        # Main selector â€” FIX: LevelActions heeft 3 pipes voor 4 levels
+        # Main selector
         if main is None:
             opts_main = {
                 "LevelNames": "Off|Pause|Play|Stop",
@@ -435,7 +427,7 @@ class LMSPlugin:
             text = text_unit
             self.log(f"Track device created for {name}")
 
-        # Actions â€” FIX: LevelActions heeft 3 pipes voor 4 levels
+        # Actions
         if actions is None:
             opts_act = {
                 "LevelNames": "None|SendText|Sync to this|Unsync",
@@ -475,7 +467,7 @@ class LMSPlugin:
 
         # Repeat
         if repeat is None:
-            opts_repeat = {"LevelNames": "Off|Track|Playlist", "LevelActions": "||", "SelectorStyle": "0"}
+            opts_repeat = {"LevelNames": "Off|Playlist|Track", "LevelActions": "||", "SelectorStyle": "0"}
             rep_unit = next_free()
             Domoticz.Device(
                 Name=f"{name} Repeat",
@@ -621,7 +613,7 @@ class LMSPlugin:
 
     # ------------------------------------------------------------------
     # FAVORITES
-    # LMS favorites zijn globaal â€” geen mac-parameter nodig
+    # LMS favorites zijn globaal — geen mac-parameter nodig
     # ------------------------------------------------------------------
     def get_player_favorites(self):
         result = self.lms_query_raw("", ["favorites", "items", 0, 50])
@@ -634,8 +626,6 @@ class LMSPlugin:
         for f in fav_loop:
             name = f.get("name", "")
             fid = f.get("id")
-            # FIX 6: expliciet filteren op hasitems==0 (afspeelbare items),
-            # mappen hebben hasitems=1 en worden zo uitgesloten
             if name and fid and f.get("hasitems") == 0:
                 favorites.append({"id": fid, "name": name})
 
@@ -650,8 +640,6 @@ class LMSPlugin:
         if not favorites:
             levelnames = "Select|Geen Favorieten"
         else:
-            # FIX 7: bouw de lijst op en stop vÃ³Ã³r de limiet bereikt wordt
-            # zodat er nooit midden in een naam of separator geknipt wordt
             parts = ["Select"]
             for f in favorites:
                 short_name = f["name"][:25]
@@ -688,7 +676,6 @@ class LMSPlugin:
         if update_msg:
             clean_msg = re.sub('<[^<]+?>', '', update_msg)
             clean_msg = clean_msg.split('Klik op hier')[0].strip()
-            # FIX 10: alleen melden als het een nieuwe/andere versie is
             if clean_msg and clean_msg != self.last_update_version:
                 try:
                     Domoticz.Status(f"{clean_msg}")
@@ -768,7 +755,6 @@ class LMSPlugin:
                 dev_text = Devices[text]
 
                 if power == 0 or mode in ["stop", "pause"]:
-                    # FIX 4: encoding-artefact vervangen door correcte Unicode escape
                     label = "\U0001F514 LMS update beschikbaar" if clean_msg else ""
 
                     if dev_text.sValue != label:
@@ -831,16 +817,23 @@ class LMSPlugin:
                 if dev_shuffle.sValue != str(level):
                     dev_shuffle.Update(nValue=0, sValue=str(level))
 
-            # Repeat
+            # Repeat status update
             if repeat in Devices:
                 dev_repeat = Devices[repeat]
                 try:
-                    repeat_state = int(st.get("playlist repeat", 0))
+                    repeat_state = int(st.get("playlist repeat", 0)) # 0=Off, 1=Track, 2=Playlist
                 except Exception:
                     repeat_state = 0
-                level = repeat_state * 10
-                if dev_repeat.sValue != str(level):
-                    dev_repeat.Update(nValue=0, sValue=str(level))
+    
+                # Mapping van server-waarde naar jouw nieuwe volgorde:
+                # 0 (Off) -> Level 0
+                # 1 (Track) -> Level 20 (nu de derde optie)
+                # 2 (Playlist) -> Level 10 (nu de tweede optie)
+                level_map = {0: "0", 1: "20", 2: "10"}
+                new_level = level_map.get(repeat_state, "0")
+    
+                if dev_repeat.sValue != new_level:
+                    dev_repeat.Update(nValue=0, sValue=new_level)
 
             # Playlist selector update
             playlist_tracks = st.get("playlist_tracks", 0)
@@ -935,7 +928,12 @@ class LMSPlugin:
 
         if "Repeat" in devname:
             if Command == "Set Level":
-                mode = int(Level // 10)
+                # Mapping van jouw nieuwe volgorde naar server-waarden:
+                # Level 0 (Off) -> mode 0
+                # Level 10 (Playlist) -> mode 2
+                # Level 20 (Track) -> mode 1
+                cmd_map = {0: 0, 10: 2, 20: 1}
+                mode = cmd_map.get(Level, 0)
             elif Command == "Off":
                 mode = 0
                 Level = 0
@@ -945,8 +943,9 @@ class LMSPlugin:
             self.send_playercmd(mac, ["playlist", "repeat", str(mode)])
             nval = 1 if mode > 0 else 0
             dev.Update(nValue=nval, sValue=str(Level))
+    
             mode_name = {0: "Off", 1: "Track", 2: "Playlist"}.get(mode, f"Unknown ({mode})")
-            self.log_player(dev, f"Repeat {mode_name}")
+            self.log_player(dev, f"Repeat set to {mode_name}")
             return
 
         if Command in ["On", "Off"] and self.is_main_device_name(devname):
