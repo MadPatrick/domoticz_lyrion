@@ -1,8 +1,8 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.1.8" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.1.9" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
         <h2><br/>Lyrion Music Server Plugin</h2>
-        <p>Version 2.1.8</p>
+        <p>Version 2.1.9</p>
         <p>Detects players, creates devices, and provides:</p>
         <ul>
             <li>Power / Play / Pause / Stop</li>
@@ -82,6 +82,9 @@ class LMSPlugin:
         self.url = ""
         self.auth = None
 
+        # Use a single session to reuse TCP connections (performance + fewer sockets)
+        self.http = requests.Session()
+
         self.pollInterval = 30
         self.offlinePollInterval = 60
         self.nextPoll = 0
@@ -112,7 +115,9 @@ class LMSPlugin:
 
         # cache per speler
         self.playlist_cache = {}
-        self.favorites_cache = {}
+
+        # Favorites are global on LMS, so cache globally (not per player)
+        self.favorites_cache = {"ts": 0, "data": []}
 
         self.listPollInterval = 600
 
@@ -142,13 +147,6 @@ class LMSPlugin:
     @staticmethod
     def is_main_device_name(name: str) -> bool:
         return not any(x in name for x in ("Volume", "Track", "Actions", "Shuffle", "Repeat", "Playlists", "Favorites"))
-
-    def get_free_unit(self):
-        used = set(Devices.keys())
-        for u in range(1, 256):
-            if u not in used:
-                return u
-        return None
 
     # ------------------------------------------------------------------
     # Domoticz lifecycle
@@ -188,7 +186,7 @@ class LMSPlugin:
                 self.log("Mode5 invalid, fallback to 60s")
                 self.offlinePollInterval = 60
 
-        # List poll interval (Mode6) — waarde is in minuten, intern omzetten naar seconden
+        # List poll interval (Mode6) waarde is in minuten, intern omzetten naar seconden
         try:
             self.listPollInterval = int(Parameters.get("Mode6", 10)) * 60
         except (TypeError, ValueError):
@@ -229,6 +227,10 @@ class LMSPlugin:
 
     def onStop(self):
         self.log("Plugin stopped.")
+        try:
+            self.http.close()
+        except Exception:
+            pass
 
     def onHeartbeat(self):
         now = time.time()
@@ -249,9 +251,13 @@ class LMSPlugin:
     def lms_query_raw(self, player, cmd_array):
         data = {"id": 1, "method": "slim.request", "params": [player, cmd_array]}
         try:
-            r = requests.post(self.url, json=data, auth=self.auth, timeout=10)
+            r = self.http.post(self.url, json=data, auth=self.auth, timeout=10)
             r.raise_for_status()
-            result = r.json().get("result")
+
+            # JSON decoding can fail even if HTTP is 200 (e.g. proxy/HTML)
+            payload = r.json()
+
+            result = payload.get("result")
             self.debug_log(f"Query: player={player}, cmd={cmd_array}, result={result}")
             self.last_success = time.time()
 
@@ -262,14 +268,20 @@ class LMSPlugin:
 
             return result
 
-        except Exception as e:
+        except requests.exceptions.RequestException as e:
+            # Network/HTTP errors only
             now = time.time()
             if self.server_was_online is not False:
                 if now - self.last_success > self.offline_grace:
-                    self.log("Lyrion Music Server is OFFLINE")
+                    self.log(f"Lyrion Music Server is OFFLINE ({e})")
                     self.server_was_online = False
 
-            self.debug_log(f"LMS query failed: {e}")
+            self.debug_log(f"LMS query network/HTTP failed: {e}")
+            return None
+
+        except ValueError as e:
+            # JSON decode error from r.json()
+            self.debug_log(f"LMS returned invalid JSON: {e}")
             return None
 
     def get_serverstatus(self):
@@ -373,9 +385,18 @@ class LMSPlugin:
             if u is not None:
                 used_units.add(u)
 
+        # StopIteration-safe allocator
         def next_free():
-            u = next(i for i in range(1, 256) if i not in used_units)
-            used_units.add(u)
+            for i in range(1, 256):
+                if i not in used_units:
+                    used_units.add(i)
+                    return i
+            return None
+
+        def require_unit(purpose: str):
+            u = next_free()
+            if u is None:
+                self.error(f"No free Domoticz units available (1..255). Cannot create device '{purpose}' for player '{name}' ({mac}).")
             return u
 
         # Main selector
@@ -385,7 +406,10 @@ class LMSPlugin:
                 "LevelActions": "|||",
                 "SelectorStyle": "0",
             }
-            main_unit = next_free()
+            main_unit = require_unit(f"{name} Control")
+            if main_unit is None:
+                return (main, vol, text, actions, shuffle, repeat, plsel, favsel)
+
             Domoticz.Device(
                 Name=f"{name} Control",
                 Unit=main_unit,
@@ -401,7 +425,10 @@ class LMSPlugin:
 
         # Volume
         if vol is None:
-            vol_unit = next_free()
+            vol_unit = require_unit(f"{name} Volume")
+            if vol_unit is None:
+                return (main, vol, text, actions, shuffle, repeat, plsel, favsel)
+
             Domoticz.Device(
                 Name=f"{name} Volume",
                 Unit=vol_unit,
@@ -415,7 +442,10 @@ class LMSPlugin:
 
         # Track
         if text is None:
-            text_unit = next_free()
+            text_unit = require_unit(f"{name} Track")
+            if text_unit is None:
+                return (main, vol, text, actions, shuffle, repeat, plsel, favsel)
+
             Domoticz.Device(
                 Name=f"{name} Track",
                 Unit=text_unit,
@@ -434,7 +464,10 @@ class LMSPlugin:
                 "LevelActions": "|||",
                 "SelectorStyle": "0",
             }
-            act_unit = next_free()
+            act_unit = require_unit(f"{name} Actions")
+            if act_unit is None:
+                return (main, vol, text, actions, shuffle, repeat, plsel, favsel)
+
             Domoticz.Device(
                 Name=f"{name} Actions",
                 Unit=act_unit,
@@ -451,7 +484,10 @@ class LMSPlugin:
         # Shuffle
         if shuffle is None:
             opts_shuffle = {"LevelNames": "Off|Songs|Albums", "LevelActions": "||", "SelectorStyle": "0"}
-            sh_unit = next_free()
+            sh_unit = require_unit(f"{name} Shuffle")
+            if sh_unit is None:
+                return (main, vol, text, actions, shuffle, repeat, plsel, favsel)
+
             Domoticz.Device(
                 Name=f"{name} Shuffle",
                 Unit=sh_unit,
@@ -468,7 +504,10 @@ class LMSPlugin:
         # Repeat
         if repeat is None:
             opts_repeat = {"LevelNames": "Off|Playlist|Track", "LevelActions": "||", "SelectorStyle": "0"}
-            rep_unit = next_free()
+            rep_unit = require_unit(f"{name} Repeat")
+            if rep_unit is None:
+                return (main, vol, text, actions, shuffle, repeat, plsel, favsel)
+
             Domoticz.Device(
                 Name=f"{name} Repeat",
                 Unit=rep_unit,
@@ -485,7 +524,10 @@ class LMSPlugin:
         # Playlists
         if plsel is None:
             opts_pl = {"LevelNames": "Select|Loading...", "LevelActions": "", "SelectorStyle": "1"}
-            pl_unit = next_free()
+            pl_unit = require_unit(f"{name} Playlists")
+            if pl_unit is None:
+                return (main, vol, text, actions, shuffle, repeat, plsel, favsel)
+
             Domoticz.Device(
                 Name=f"{name} Playlists",
                 Unit=pl_unit,
@@ -502,7 +544,10 @@ class LMSPlugin:
         # Favorites
         if favsel is None:
             opts_fav = {"LevelNames": "Select|Loading...", "LevelActions": "", "SelectorStyle": "1"}
-            fav_unit = next_free()
+            fav_unit = require_unit(f"{name} Favorites")
+            if fav_unit is None:
+                return (main, vol, text, actions, shuffle, repeat, plsel, favsel)
+
             Domoticz.Device(
                 Name=f"{name} Favorites",
                 Unit=fav_unit,
@@ -545,14 +590,14 @@ class LMSPlugin:
         self.playlist_cache[mac] = {"ts": now, "data": playlists}
         return playlists
 
-    def get_cached_favorites(self, mac):
+    def get_cached_favorites(self, _mac_unused=None):
         now = time.time()
-        entry = self.favorites_cache.get(mac)
+        entry = self.favorites_cache
         if entry and now - entry["ts"] < self.listPollInterval:
             return entry["data"]
 
         favorites = self.get_player_favorites()
-        self.favorites_cache[mac] = {"ts": now, "data": favorites}
+        self.favorites_cache = {"ts": now, "data": favorites}
         return favorites
 
     def update_player_playlist_selector(self, plsel_unit, playlists, active_playlist_name=None):
@@ -613,7 +658,7 @@ class LMSPlugin:
 
     # ------------------------------------------------------------------
     # FAVORITES
-    # LMS favorites zijn globaal — geen mac-parameter nodig
+    # LMS favorites zijn globaal
     # ------------------------------------------------------------------
     def get_player_favorites(self):
         result = self.lms_query_raw("", ["favorites", "items", 0, 50])
@@ -684,8 +729,6 @@ class LMSPlugin:
                 self.last_update_version = clean_msg
                 self.update_notified = True
         else:
-            # Server meldt geen update meer: reset zodat een volgende
-            # nieuwe versie opnieuw gemeld wordt
             if self.update_notified:
                 self.last_update_version = ""
                 self.update_notified = False
@@ -821,17 +864,13 @@ class LMSPlugin:
             if repeat in Devices:
                 dev_repeat = Devices[repeat]
                 try:
-                    repeat_state = int(st.get("playlist repeat", 0)) # 0=Off, 1=Track, 2=Playlist
+                    repeat_state = int(st.get("playlist repeat", 0))  # 0=Off, 1=Track, 2=Playlist
                 except Exception:
                     repeat_state = 0
-    
-                # Mapping van server-waarde naar jouw nieuwe volgorde:
-                # 0 (Off) -> Level 0
-                # 1 (Track) -> Level 20 (nu de derde optie)
-                # 2 (Playlist) -> Level 10 (nu de tweede optie)
+
                 level_map = {0: "0", 1: "20", 2: "10"}
                 new_level = level_map.get(repeat_state, "0")
-    
+
                 if dev_repeat.sValue != new_level:
                     dev_repeat.Update(nValue=0, sValue=new_level)
 
@@ -866,14 +905,12 @@ class LMSPlugin:
         if Unit not in Devices:
             return
 
-        # Forceer snelle update na een commando
         self.nextPoll = time.time() + 1
 
         dev = Devices[Unit]
         devname = dev.Name
         mac = dev.Description
 
-        # Vroege check op lege MAC
         if not mac:
             self.error(f"No MAC address for device {Unit} ('{devname}'), command ignored.")
             return
@@ -928,10 +965,6 @@ class LMSPlugin:
 
         if "Repeat" in devname:
             if Command == "Set Level":
-                # Mapping van jouw nieuwe volgorde naar server-waarden:
-                # Level 0 (Off) -> mode 0
-                # Level 10 (Playlist) -> mode 2
-                # Level 20 (Track) -> mode 1
                 cmd_map = {0: 0, 10: 2, 20: 1}
                 mode = cmd_map.get(Level, 0)
             elif Command == "Off":
@@ -943,7 +976,7 @@ class LMSPlugin:
             self.send_playercmd(mac, ["playlist", "repeat", str(mode)])
             nval = 1 if mode > 0 else 0
             dev.Update(nValue=nval, sValue=str(Level))
-    
+
             mode_name = {0: "Off", 1: "Track", 2: "Playlist"}.get(mode, f"Unknown ({mode})")
             self.log_player(dev, f"Repeat set to {mode_name}")
             return
@@ -969,7 +1002,6 @@ class LMSPlugin:
         self.log_player(dev, f"Volume {Level}%")
 
     def handle_actions(self, dev, mac, Level):
-        # Level 10: SendText, 20: Sync, 30: Unsync
         if Level == 10:
             if self.displayText:
                 self.send_display_text(mac, self.displayText)
@@ -1015,7 +1047,6 @@ class LMSPlugin:
             self.log_player(dev, "Power Off")
 
     def handle_main_playback(self, dev, mac, Level):
-        # 0=Off, 10=Pause, 20=Play, 30=Stop
         if Level == 0:
             self.send_playercmd(mac, ["power", "0"])
             dev.Update(nValue=0, sValue="0")
@@ -1041,9 +1072,6 @@ class LMSPlugin:
             return
 
 
-# ----------------------------------------------------------------------
-# Domoticz plugin callbacks
-# ----------------------------------------------------------------------
 global _plugin
 _plugin = LMSPlugin()
 
