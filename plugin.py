@@ -32,8 +32,8 @@
                 <br/>
             </description>
             <options>
-                <option label="10 sec" value="10"/>
-                <option label="20 sec" value="20" default="true"/>
+                <option label="10 sec" value="10" default="true"/>
+                <option label="20 sec" value="20"/>
                 <option label="30 sec" value="30"/>
                 <option label="60 sec" value="60"/>
                 <option label="120 sec" value="120"/>
@@ -59,7 +59,7 @@
         </options>
         </param>
         <param field="Mode2" label="Max playlists to load" width="100px" default="5"/>
-        <param field="Mode3" label="Debug logging" width="100px" default="No">
+        <param field="Mode3" label="Debug logging" width="100px" default="False">
             <options>
                 <option label="Off" value="False" default="true"/>
                 <option label="On" value="True"/>
