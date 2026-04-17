@@ -257,6 +257,10 @@ class LMSPlugin:
             # JSON decoding can fail even if HTTP is 200 (e.g. proxy/HTML)
             payload = r.json()
 
+            if not isinstance(payload, dict):
+                self.debug_log(f"LMS returned unexpected JSON type ({type(payload).__name__}): {payload}")
+                return None
+
             result = payload.get("result")
             self.debug_log(f"Query: player={player}, cmd={cmd_array}, result={result}")
             self.last_success = time.time()
