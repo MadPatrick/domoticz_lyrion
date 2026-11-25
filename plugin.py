@@ -1,8 +1,8 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.3.0" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_lyrion">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.3.1" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_lyrion">
     <description>
         <h2>Lyrion Music Server</h2>
-        <p><strong>Version:</strong> 2.3.0</p>
+        <p><strong>Version:</strong> 2.3.1</p>
         <p>Automatically detects Lyrion Music Server players and creates a complete set of Domoticz controls for each player.</p>
         <h3>Features</h3>
         <ul>
