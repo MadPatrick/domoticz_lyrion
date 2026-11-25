@@ -8,35 +8,33 @@ This plugin provides full integration between **Lyrion Music Server (LMS)** and 
 The plugin has been fully rewritten, extended, tested, and is stable on Domoticz 2024+.
 
 ---
-### 🎛️ **Full LMS Remote Control**
-- Play / Pause / Stop
-- Next / Previous track
-- Volume control (dimmer)
+### 🎛️ **LMS Remote Control**
 - Power On/Off
-- Sync / Unsync players
+- Play / Pause / Stop
+- Volume control (dimmer)
+- Shuffle (Off / Songs / Albums) and Repeat (Off / Playlist / Track)
+- Sync all players to this player / Unsync
+- Send a configurable text to the player display
 
 ### 📡 **Automatic Player Detection**
 - Detects all connected LMS players automatically
-- Creates Domoticz devices for each player
+- Creates a set of Domoticz devices for each player:
+  Control, Volume, Track, Actions, Shuffle, Repeat, Playlists and Favorites
 
-### 📊 **Extended Player Information**
-- Current track
-- Artist
-- Album
+### 📊 **Player Information**
 - Playback status
 - Volume
-- Online/offline status
+- Current station, artist and title (Track text device)
+- Notification when an LMS update is available
 
-### 🎶 **Playlist Support**
-- Load playlists per player
-- Add tracks to playlist
-- Clear playlist
-- Start playlists directly via Domoticz or scripts
+### 🎶 **Playlists and Favorites**
+- Start one of the player's playlists from a selector
+- Start one of the (global) LMS favorites from a selector
 
-### 🧠 **Reliable JSON-RPC Communication**
-- Full support for `jsonrpc.js`
-- Fully tested with Material Skin UI
-- Compatible with LMS 8.x
+### 🧠 **JSON-RPC Communication**
+- Uses the LMS `jsonrpc.js` interface
+- Optional HTTPS: enter a full URL (e.g. `https://lms.example.com:9443`) as Server IP
+- Note: over plain HTTP the username and password are sent unencrypted (Basic Auth). Use HTTPS through a reverse proxy if that matters on your network.
 
 ---
 
@@ -75,7 +73,7 @@ Clone the plugin into the Domoticz plugin folder:
 
 ```bash
 cd /home/<user>/domoticz/plugins
-git clone https://github.com/MadPatrick/domoticz_Lyrion.git lyrion
+git clone https://github.com/MadPatrick/domoticz_lyrion.git lyrion
 sudo systemctl restart domoticz
 
 ```
